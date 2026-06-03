@@ -272,39 +272,63 @@ export class BibleView extends ItemView {
 			console.log(countMsg);
 			if (this.plugin?.writeLog) await this.plugin.writeLog(countMsg);
 
+			const bookid = this.plugin.getBookIdFromName(bookName);
+			const bookPrefix = String(bookid).padStart(2, "0") + String(chapterNumber).padStart(3, "0");
+
 			highlightVerses.forEach((v) => {
-				const targetSuperscript = convertToSuperscript(v.toString());
-				const checkingMsg = `[Bible Sidecar Debug] Matching verse ${v} using superscript '${targetSuperscript}'`;
-				console.log(checkingMsg);
-				if (this.plugin?.writeLog) this.plugin.writeLog(checkingMsg).catch(() => {});
 				let matchedForV = false;
+
+				// Try ESV API coordinate prefix first (e.g. p40015008 or v40015008)
+				const verseStr = String(v).padStart(3, "0");
+				const idPrefix = bookPrefix + verseStr;
+				const query = `[id^="p${idPrefix}"], [id^="v${idPrefix}"]`;
+				const matchedEls = container.querySelectorAll(query);
 				
-				elements.forEach((el: HTMLElement) => {
-					const textVal = (el.textContent || "").trim();
-					if (textVal === targetSuperscript) {
-						matchedForV = true;
-						const matchMsg = `[Bible Sidecar Debug] Success: Match found for verse ${v} on element text: '${textVal}'`;
-						console.log(matchMsg);
-						if (this.plugin?.writeLog) this.plugin.writeLog(matchMsg).catch(() => {});
-						
-						const parentVerse = el.closest(".verse") || el.closest(".verse-inline");
-						if (parentVerse) {
-							parentVerse.classList.add("active-verse");
-							if (v < minVerse) {
-								minVerse = v;
-								firstScrollEl = parentVerse as HTMLElement;
-							}
-						} else {
-							el.classList.add("active-verse");
-							if (v < minVerse) {
-								minVerse = v;
-								firstScrollEl = el;
-							}
+				if (matchedEls.length > 0) {
+					matchedForV = true;
+					matchedEls.forEach((el: HTMLElement) => {
+						el.classList.add("active-verse");
+						if (v < minVerse && !firstScrollEl) {
+							minVerse = v;
+							firstScrollEl = el;
 						}
-					}
-				});
+					});
+				}
 
 				if (!matchedForV) {
+					const targetSuperscript = convertToSuperscript(v.toString());
+					const checkingMsg = `[Bible Sidecar Debug] Matching verse ${v} using superscript '${targetSuperscript}'`;
+					console.log(checkingMsg);
+					if (this.plugin?.writeLog) this.plugin.writeLog(checkingMsg).catch(() => {});
+					
+					elements.forEach((el: HTMLElement) => {
+						const textVal = (el.textContent || "").trim();
+						if (textVal === targetSuperscript) {
+							matchedForV = true;
+							const matchMsg = `[Bible Sidecar Debug] Success: Match found for verse ${v} on element text: '${textVal}'`;
+							console.log(matchMsg);
+							if (this.plugin?.writeLog) this.plugin.writeLog(matchMsg).catch(() => {});
+							
+							const parentVerse = el.closest(".verse") || el.closest(".verse-inline");
+							if (parentVerse) {
+								parentVerse.classList.add("active-verse");
+								if (v < minVerse) {
+									minVerse = v;
+									firstScrollEl = parentVerse as HTMLElement;
+								}
+							} else {
+								el.classList.add("active-verse");
+								if (v < minVerse) {
+									minVerse = v;
+									firstScrollEl = el;
+								}
+							}
+						}
+					});
+				}
+
+				if (!matchedForV) {
+					const targetSuperscript = convertToSuperscript(v.toString());
 					const warnMsg = `[Bible Sidecar Debug] Warning: Failed to find element matching '${targetSuperscript}' for verse ${v}`;
 					console.log(warnMsg);
 					if (this.plugin?.writeLog) this.plugin.writeLog(warnMsg).catch(() => {});

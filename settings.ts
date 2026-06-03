@@ -9,6 +9,8 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 	esvError: string = "";
 	apiBibleStatus: "none" | "validating" | "success" | "error" = "none";
 	apiBibleError: string = "";
+	premiumDetailsOpen: boolean = false;
+	autoExpandDetailsOpen: boolean = false;
 
 	constructor(app: App, plugin: BibleSidecarPlugin) {
 		super(app, plugin);
@@ -391,7 +393,15 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 					});
 			});
 
-		const premiumDetails = containerEl.createEl("details", { cls: "bible-settings-details" });
+		const premiumDetails = containerEl.createEl("details", { 
+			cls: "bible-settings-details" 
+		});
+		if (this.premiumDetailsOpen) {
+			premiumDetails.setAttribute("open", "true");
+		}
+		premiumDetails.addEventListener("toggle", () => {
+			this.premiumDetailsOpen = premiumDetails.open;
+		});
 		premiumDetails.createEl("summary", { text: "Premium API Providers (ESV API & API.Bible)", cls: "bible-settings-summary" });
 		const premiumContent = premiumDetails.createDiv({ cls: "bible-settings-content" });
 
@@ -690,7 +700,15 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 		}
 
 		// --- Auto-Expand Options (+p, +l, +q) ---
-		const expandDetails = containerEl.createEl("details", { cls: "bible-settings-details" });
+		const expandDetails = containerEl.createEl("details", { 
+			cls: "bible-settings-details" 
+		});
+		if (this.autoExpandDetailsOpen) {
+			expandDetails.setAttribute("open", "true");
+		}
+		expandDetails.addEventListener("toggle", () => {
+			this.autoExpandDetailsOpen = expandDetails.open;
+		});
 		expandDetails.createEl("summary", { text: "Auto-Expand Options (+p, +l, +q)", cls: "bible-settings-summary" });
 		const expandContent = expandDetails.createDiv({ cls: "bible-settings-content" });
 

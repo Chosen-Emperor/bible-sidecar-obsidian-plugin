@@ -1,10 +1,13 @@
-# Reasoning - Click Highlighting Removal & Settings API Validation
+# Reasoning - Highlight Refinements & User-Friendly Settings
 
-This document tracks design reasoning for two major changes: the premium settings feedback and the removal of click-based sidecar verse highlights.
+This document records reasoning for the highlighting refinements and settings toggle behavior modifications.
 
 ## Design Philosophies
-- **Minimalist & Clean Layout**: Standardizing on automatic and snappier temporary highlights when navigating to a passage (for search and cross-referencing), rather than adding permanent active verse states upon simple sidecar click events, which could lead to unwanted visual clutter.
+- **Clean Reading Experience**: Permanent Selection Underlines can be visually distracting and look cluttered during general reading. Restricting active styling to dynamic background animations ensures a clean layout.
+- **Accurate Presentation of Premium Texts**: Verse highlighting must respect the premium layout structure of the ESV API (such as multiline block-quotes and stanzas).
+- **Frictionless UI Controls**: Settings windows should not close expanded details blocks upon refreshing.
 
 ## Design Decisions
-- **Removing chapterContent Click Listener**: Removed the click event listener that matched nearest `.verse`, `.verse-inline`, or `.verse-num` elements and applied `.active-verse`. This prevents permanent selection highlights during normal reading clicks.
-- **Dynamic Settings API Validation**: Retained the live checking of ESV and API.Bible keys via on-demand HTTP requests and updating setting description labels.
+- **Persistent Underline Removal**: Removed the `border-bottom` underline from `.verse-inline.active-verse` in `styles.css`. Active verses now rely on temporary, fading amber background highlights.
+- **Multi-Line Quote/Stanza Highlight**: Refactored the highlight logic in `navigateToPassage` (`BibleView.ts`) to query for all DOM elements matching the ESV API coordinate ID prefix (e.g., `[id^="p40015008"]` or `[id^="v40015008"]`). This highlights all lines of a poetic quote together, rather than just the first line.
+- **Persist Details Element State**: Stored the toggled states `premiumDetailsOpen` and `autoExpandDetailsOpen` inside the `BibleSidecarSettingsTab` component. Listening to `toggle` events and restoring `open` attributes on re-render prevents details panels from collapsing when users click "Connect" or type input.
