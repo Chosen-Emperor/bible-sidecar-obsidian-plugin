@@ -157,6 +157,26 @@ export class BibleView extends ItemView {
 	private isOfflineState: boolean = !navigator.onLine;
 	private currentWindow: Window | null = null;
 	private isLoadingBooks: boolean = false;
+	private savedScrollPositions: Record<string, number> = {};
+
+	saveCurrentScrollPosition() {
+		const container = this.containerEl.querySelector(".chapter-container");
+		if (container) {
+			this.savedScrollPositions[this.currentView] = container.scrollTop;
+			this.logDebug(`Saved scroll position for view '${this.currentView}': ${container.scrollTop}`);
+		}
+	}
+
+	restoreScrollPosition(view: string) {
+		const container = this.containerEl.querySelector(".chapter-container");
+		if (container && this.savedScrollPositions[view] !== undefined) {
+			const scrollTop = this.savedScrollPositions[view];
+			setTimeout(() => {
+				container.scrollTop = scrollTop;
+				this.logDebug(`Restored scroll position for view '${view}': ${scrollTop}`);
+			}, 50);
+		}
+	}
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -593,6 +613,7 @@ export class BibleView extends ItemView {
 		try {
 			const books = await this.generateBibleBooks(this.settings.bibleVersion);
 			await this.renderBooks(books);
+			this.restoreScrollPosition("books");
 		} finally {
 			this.isLoadingBooks = false;
 		}
@@ -899,6 +920,8 @@ export class BibleView extends ItemView {
 					: book.name;
 				card.createSpan({ text: bookDisplayName });
 				card.addEventListener("click", async () => {
+					this.saveCurrentScrollPosition();
+					delete this.savedScrollPositions["chapters"];
 					await this.renderChapters(book, chapterContainer, books);
 				});
 				bookElements.push({ book, el: card });
@@ -1042,6 +1065,7 @@ export class BibleView extends ItemView {
 			});
 			this.safeSetIcon(backBtn, "arrow-left");
 			backBtn.addEventListener("click", () => {
+				this.saveCurrentScrollPosition();
 				this.loadBible();
 			});
 			
@@ -1074,6 +1098,7 @@ export class BibleView extends ItemView {
 			
 			btn.addEventListener("click", async () => {
 				this.logDebug(`Chapter button clicked: ${book.name} Chapter ${i}`);
+				this.saveCurrentScrollPosition();
 				chapterContainer.empty();
 				chapterContainer.createDiv({ cls: "bible-loading-indicator", text: `Loading ${book.name} Chapter ${i}...` });
 
@@ -1098,6 +1123,7 @@ export class BibleView extends ItemView {
 				});
 		}
 		this.updateOfflineStatus(this.isOfflineState);
+		this.restoreScrollPosition("chapters");
 	}
 
 	async processChapterContent(
@@ -1133,6 +1159,7 @@ export class BibleView extends ItemView {
 			this.safeSetIcon(backBtn, "arrow-left");
 			backBtn.addEventListener("click", async () => {
 				this.logDebug(`Back to Chapters clicked. Going back to chapter selection for book: ${book.name}`);
+				this.saveCurrentScrollPosition();
 				chapterContainer.empty();
 				await this.renderChapters(book, chapterContainer, books);
 			});
