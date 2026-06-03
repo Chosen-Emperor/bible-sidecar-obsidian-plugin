@@ -31,7 +31,16 @@
     padding: 16px;
     gap: 16px;
     scroll-behavior: smooth;
+    opacity: 1;
+    transition: opacity 0.12s ease-out;
 }
+
+[data-type="bible-view-plus"] .chapter-container.is-scroll-restoring {
+    scroll-behavior: auto !important;
+    opacity: 0 !important;
+    transition: none !important;
+}
+
 
 /* Custom Scrollbar */
 [data-type="bible-view-plus"] .chapter-container::-webkit-scrollbar {

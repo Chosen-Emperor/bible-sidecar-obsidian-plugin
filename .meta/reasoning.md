@@ -38,6 +38,13 @@ This document tracks reasoning for highlight refinements (nested vs double highl
 - **Dynamic Check**: Intercepted requests inside `navigateToPassage()`. If the view is offline, it reads local database translation caches and checks if the targeted chapter is cached.
 - **User Notice Alert**: Shows an informative `new Notice()` warning that the chapter is unavailable offline, aborting navigation early to preserve active state.
 
+## Scroll Position Memory Cache
+- **Objective**: Retain scroll locations during navigation (e.g. going back from chapters to books) to prevent annoying layout jumps, resetting naturally on app restart.
+- **In-Memory Cache Map**: Implemented `savedScrollPositions` inside the `BibleView` class. This holds view state positions at runtime without write-to-disk overhead.
+- **Dynamic Save/Restore Triggers**: Integrated `saveCurrentScrollPosition()` on book card clicks, chapter button clicks, and back button navigations. Restores coordinates using `restoreScrollPosition()` via layout timeouts during rendering.
+- **Smart Book Resets**: Deletes `chapters` scroll state when a new book is clicked so that users start scrolling from the top of the grid for a different book.
+
+
 
 
 

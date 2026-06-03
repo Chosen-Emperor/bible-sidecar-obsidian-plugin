@@ -158,6 +158,9 @@ export class BibleView extends ItemView {
 	private currentWindow: Window | null = null;
 	private isLoadingBooks: boolean = false;
 	private savedScrollPositions: Record<string, number> = {};
+	private otCollapsed: boolean = false;
+	private ntCollapsed: boolean = false;
+
 
 	saveCurrentScrollPosition() {
 		const container = this.containerEl.querySelector(".chapter-container");
@@ -168,13 +171,19 @@ export class BibleView extends ItemView {
 	}
 
 	restoreScrollPosition(view: string) {
-		const container = this.containerEl.querySelector(".chapter-container");
+		const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
 		if (container && this.savedScrollPositions[view] !== undefined) {
 			const scrollTop = this.savedScrollPositions[view];
+			container.classList.add("is-scroll-restoring");
+			container.scrollTop = scrollTop;
+			
+			// Force layout reflow
+			void container.offsetHeight;
+
 			setTimeout(() => {
-				container.scrollTop = scrollTop;
-				this.logDebug(`Restored scroll position for view '${view}': ${scrollTop}`);
-			}, 50);
+				container.classList.remove("is-scroll-restoring");
+				this.logDebug(`Restored and snapped scroll position for view '${view}': ${scrollTop}`);
+			}, 30);
 		}
 	}
 
@@ -861,10 +870,16 @@ export class BibleView extends ItemView {
 		const oldChevron = oldHeader.createDiv({ cls: "bible-testament-chevron" });
 		this.safeSetIcon(oldChevron, "chevron-down");
 		const oldGrid = browseViewEl.createDiv({ cls: "bible-books-grid" });
+
+		// Initial Old Testament Collapse State
+		oldGrid.style.display = this.otCollapsed ? "none" : "grid";
+		oldHeader.classList.toggle("is-collapsed", this.otCollapsed);
+
 		oldHeader.addEventListener("click", () => {
 			const isCollapsed = oldGrid.style.display === "none";
 			oldGrid.style.display = isCollapsed ? "grid" : "none";
 			oldHeader.classList.toggle("is-collapsed", !isCollapsed);
+			this.otCollapsed = !isCollapsed;
 		});
 
 		// New Testament section
@@ -873,10 +888,16 @@ export class BibleView extends ItemView {
 		const newChevron = newHeader.createDiv({ cls: "bible-testament-chevron" });
 		this.safeSetIcon(newChevron, "chevron-down");
 		const newGrid = browseViewEl.createDiv({ cls: "bible-books-grid" });
+
+		// Initial New Testament Collapse State
+		newGrid.style.display = this.ntCollapsed ? "none" : "grid";
+		newHeader.classList.toggle("is-collapsed", this.ntCollapsed);
+
 		newHeader.addEventListener("click", () => {
 			const isCollapsed = newGrid.style.display === "none";
 			newGrid.style.display = isCollapsed ? "grid" : "none";
 			newHeader.classList.toggle("is-collapsed", !isCollapsed);
+			this.ntCollapsed = !isCollapsed;
 		});
 
 		const noResults = browseViewEl.createDiv({
@@ -962,6 +983,12 @@ export class BibleView extends ItemView {
 					newGrid.style.display = "grid";
 					newHeader.classList.remove("is-collapsed");
 				}
+			} else {
+				// Revert to saved collapse state when search is empty
+				oldGrid.style.display = this.otCollapsed ? "none" : "grid";
+				oldHeader.classList.toggle("is-collapsed", this.otCollapsed);
+				newGrid.style.display = this.ntCollapsed ? "none" : "grid";
+				newHeader.classList.toggle("is-collapsed", this.ntCollapsed);
 			}
 		};
 
