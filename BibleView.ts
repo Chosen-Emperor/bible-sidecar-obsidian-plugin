@@ -1,6 +1,63 @@
 import { ItemView, WorkspaceLeaf, requestUrl, Notice, Platform, setIcon } from "obsidian";
 import { convertToSuperscript, convertToNumber, compileCopyMessage, copyToClipboard } from "./utils";
 
+function colorGospelQuotesRedInDOM(node: Node, state = { inQuote: false }) {
+	if (node.nodeType === Node.TEXT_NODE) {
+		const text = node.textContent || "";
+		let resultHtml = "";
+		let lastIdx = 0;
+		
+		for (let i = 0; i < text.length; i++) {
+			const char = text[i];
+			if (char === "“" || char === "\u201c" || (char === '"' && !state.inQuote)) {
+				resultHtml += text.substring(lastIdx, i);
+				resultHtml += char + '<span style="color: red;">';
+				state.inQuote = true;
+				lastIdx = i + 1;
+			} else if (char === "”" || char === "\u201d" || (char === '"' && state.inQuote)) {
+				resultHtml += text.substring(lastIdx, i);
+				if (state.inQuote) {
+					resultHtml += '</span>';
+					state.inQuote = false;
+				}
+				resultHtml += char;
+				lastIdx = i + 1;
+			}
+		}
+		
+		if (lastIdx > 0) {
+			resultHtml += text.substring(lastIdx);
+			if (state.inQuote && !resultHtml.endsWith('</span>')) {
+				resultHtml += '</span>';
+			}
+			
+			const temp = document.createElement("span");
+			temp.innerHTML = resultHtml;
+			
+			const parent = node.parentNode;
+			if (parent) {
+				while (temp.firstChild) {
+					parent.insertBefore(temp.firstChild, node);
+				}
+				parent.removeChild(node);
+			}
+		} else if (state.inQuote) {
+			const span = document.createElement("span");
+			span.style.color = "red";
+			span.textContent = text;
+			node.parentNode?.replaceChild(span, node);
+		}
+	} else if (node.nodeType === Node.ELEMENT_NODE) {
+		const tagName = (node as Element).tagName.toLowerCase();
+		if (tagName !== "script" && tagName !== "style") {
+			const children = Array.from(node.childNodes);
+			children.forEach(child => {
+				colorGospelQuotesRedInDOM(child, state);
+			});
+		}
+	}
+}
+
 export const BibleViewType = "bible-view-plus";
 
 interface BibleSidecarSettings {
@@ -275,74 +332,26 @@ export class BibleView extends ItemView {
 			const bookid = this.plugin.getBookIdFromName(bookName);
 			const bookPrefix = String(bookid).padStart(2, "0") + String(chapterNumber).padStart(3, "0");
 
+			const matchedElements: HTMLElement[] = [];
+
 			highlightVerses.forEach((v) => {
 				let matchedForV = false;
 
-				// Try ESV API coordinate prefix first (e.g. p40015008 or v40015008)
-				const verseStr = String(v).padStart(3, "0");
-				const idPrefix = bookPrefix + verseStr;
-				const query = `[id^="p${idPrefix}"], [id^="v${idPrefix}"]`;
-				const matchedEls = Array.from(container.querySelectorAll(query)) as HTMLElement[];
-				
-				if (matchedEls.length > 0) {
+				// 1. Try querying by data-verse attribute (most precise way)
+				const query = `[data-verse="${v}"]`;
+				const queryEls = Array.from(container.querySelectorAll(query)) as HTMLElement[];
+				if (queryEls.length > 0) {
 					matchedForV = true;
-					matchedEls.forEach((el: HTMLElement) => {
-						if (v < minVerse && !firstScrollEl) {
+					queryEls.forEach((el) => {
+						if (v < minVerse) {
 							minVerse = v;
 							firstScrollEl = el;
 						}
-
-						const hasDifferentVerseDescendant = Array.from(el.querySelectorAll('[id^="p"], [id^="v"]')).some((desc: HTMLElement) => {
-							const descId = desc.id || "";
-							const descPrefixMatch = descId.match(/^[pv](\d{8})/);
-							if (descPrefixMatch) {
-								const descPrefix = descPrefixMatch[1];
-								return descPrefix !== idPrefix;
-							}
-							return false;
-						});
-
-						if (hasDifferentVerseDescendant) {
-							// Highlight immediate child nodes that don't belong/contain different verses
-							Array.from(el.childNodes).forEach((child: Node) => {
-								if (child instanceof HTMLElement) {
-									const childId = child.id || "";
-									const childPrefixMatch = childId.match(/^[pv](\d{8})/);
-									const isDifferent = childPrefixMatch && childPrefixMatch[1] !== idPrefix;
-									const containsDifferent = Array.from(child.querySelectorAll('[id^="p"], [id^="v"]')).some((desc: HTMLElement) => {
-										const descId = desc.id || "";
-										const descPrefixMatch = descId.match(/^[pv](\d{8})/);
-										return descPrefixMatch && descPrefixMatch[1] !== idPrefix;
-									});
-									
-									if (!isDifferent && !containsDifferent) {
-										child.classList.add("active-verse");
-									}
-								} else if (child.nodeType === Node.TEXT_NODE && child.textContent?.trim()) {
-									const span = document.createElement("span");
-									span.className = "active-verse";
-									child.parentNode?.insertBefore(span, child);
-									span.appendChild(child);
-								}
-							});
-						} else {
-							// Avoid double highlighting if any ancestor is already active-verse
-							let ancestorIsHighlighted = false;
-							let p = el.parentElement;
-							while (p && p !== container) {
-								if (p.classList.contains("active-verse")) {
-									ancestorIsHighlighted = true;
-									break;
-								}
-								p = p.parentElement;
-							}
-							if (!ancestorIsHighlighted) {
-								el.classList.add("active-verse");
-							}
-						}
+						matchedElements.push(el);
 					});
 				}
 
+				// 2. Fallback to superscript text matching on .verse-num elements
 				if (!matchedForV) {
 					const targetSuperscript = convertToSuperscript(v.toString());
 					const checkingMsg = `[Bible Sidecar Debug] Matching verse ${v} using superscript '${targetSuperscript}'`;
@@ -358,19 +367,12 @@ export class BibleView extends ItemView {
 							if (this.plugin?.writeLog) this.plugin.writeLog(matchMsg).catch(() => {});
 							
 							const parentVerse = el.closest(".verse") || el.closest(".verse-inline");
-							if (parentVerse) {
-								parentVerse.classList.add("active-verse");
-								if (v < minVerse) {
-									minVerse = v;
-									firstScrollEl = parentVerse as HTMLElement;
-								}
-							} else {
-								el.classList.add("active-verse");
-								if (v < minVerse) {
-									minVerse = v;
-									firstScrollEl = el;
-								}
+							const highlightEl = (parentVerse || el) as HTMLElement;
+							if (v < minVerse) {
+								minVerse = v;
+								firstScrollEl = highlightEl;
 							}
+							matchedElements.push(highlightEl);
 						}
 					});
 				}
@@ -380,6 +382,22 @@ export class BibleView extends ItemView {
 					const warnMsg = `[Bible Sidecar Debug] Warning: Failed to find element matching '${targetSuperscript}' for verse ${v}`;
 					console.log(warnMsg);
 					if (this.plugin?.writeLog) this.plugin.writeLog(warnMsg).catch(() => {});
+				}
+			});
+
+			// Highlight matched elements, ensuring we don't double highlight nested matches
+			matchedElements.forEach((el) => {
+				let ancestorIsMatched = false;
+				let p = el.parentElement;
+				while (p && p !== container) {
+					if (matchedElements.includes(p as HTMLElement)) {
+						ancestorIsMatched = true;
+						break;
+					}
+					p = p.parentElement;
+				}
+				if (!ancestorIsMatched) {
+					el.classList.add("active-verse");
 				}
 			});
 
@@ -971,7 +989,10 @@ export class BibleView extends ItemView {
 
 					const formattedVerse = chapterContent.createEl("div", { 
 						cls: "verse",
-						attr: { draggable: "true" }
+						attr: { 
+							draggable: "true",
+							"data-verse": verseNum
+						}
 					});
 					formattedVerse.innerHTML = `<span class="verse-num">${formattedVerseNumber}</span> ${displayHtml}`;
 
@@ -1025,12 +1046,6 @@ export class BibleView extends ItemView {
 				cleanHtml = cleanHtml.replace(/(<p[^>]*>|<div[^>]*>|>\u00A0|>\s*)\s*(\d+):1\s+/g, '$1<span class="verse-num">¹</span>\u00A0');
 				cleanHtml = cleanHtml.replace(/(<span[^>]*class="[^"]*(chapter|v)[^"]*"[^>]*>)\s*(\d+):1\s*(<\/span>)/g, '$1¹$4');
 				
-				if (this.settings.gospelQuotesRed && ["matthew", "mark", "luke", "john"].includes(book.name.toLowerCase())) {
-					cleanHtml = cleanHtml
-						.replace(/\u201c([^\u201d]+)\u201d/g, '\u201c<span style="color: red;">$1</span>\u201d')
-						.replace(/“([^”]+)”/g, '“<span style="color: red;">$1</span>”');
-				}
-
 				const inlineDiv = document.createElement("div");
 				inlineDiv.innerHTML = cleanHtml;
 				const spans = inlineDiv.querySelectorAll(isEsv ? "b.verse-num, b.chapter-num, span.chapter-num" : "span.v");
@@ -1092,6 +1107,45 @@ export class BibleView extends ItemView {
 					// Remove original span
 					span.remove();
 				});
+
+				// Apply Gospel quotes red formatting safely using DOM traversal to prevent HTML tag corruption
+				if (this.settings.gospelQuotesRed && ["matthew", "mark", "luke", "john"].includes(book.name.toLowerCase())) {
+					colorGospelQuotesRedInDOM(inlineDiv);
+				}
+
+				// Second-pass scanner for ESV API elements to tag elements with data-verse
+				const allEls = inlineDiv.querySelectorAll('*');
+				allEls.forEach((el: HTMLElement) => {
+					const id = el.id || "";
+					const match = id.match(/^[pv](\d{2})(\d{3})(\d{3})/);
+					if (match) {
+						const vNum = parseInt(match[3]).toString();
+						// Check if this element contains any descendant element that belongs to a different verse
+						const descendants = el.querySelectorAll('*');
+						let hasDifferentVerse = false;
+						for (let j = 0; j < descendants.length; j++) {
+							const desc = descendants[j] as HTMLElement;
+							const descId = desc.id || "";
+							const descMatch = descId.match(/^[pv](\d{2})(\d{3})(\d{3})/);
+							if (descMatch) {
+								const descVNum = parseInt(descMatch[3]).toString();
+								if (descVNum !== vNum) {
+									hasDifferentVerse = true;
+									break;
+								}
+							}
+							const descDataVerse = desc.getAttribute("data-verse");
+							if (descDataVerse && descDataVerse !== vNum) {
+								hasDifferentVerse = true;
+								break;
+							}
+						}
+						if (!hasDifferentVerse) {
+							el.setAttribute("data-verse", vNum);
+							el.classList.add("verse-inline");
+						}
+					}
+				});
 				
 				chapterContent.innerHTML = inlineDiv.innerHTML;
 			}
@@ -1110,7 +1164,10 @@ export class BibleView extends ItemView {
 
 					const formattedVerse = chapterContent.createEl("div", { 
 						cls: "verse",
-						attr: { draggable: "true" }
+						attr: { 
+							draggable: "true",
+							"data-verse": verse.verse
+						}
 					});
 					formattedVerse.innerHTML = `<span class="verse-num">${formattedVerseNumber}</span> ${displayHtml}`;
 
