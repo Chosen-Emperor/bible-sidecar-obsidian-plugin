@@ -197,22 +197,31 @@ export class BibleView extends ItemView {
 	}
 	
 	public async navigateToPassage(bookName: string, chapterNumber: number, verseNumber: number, endVerseNumber?: number) {
+		console.log(`[Bible Sidecar Debug] navigateToPassage called: bookName=${bookName}, chapterNumber=${chapterNumber}, verseNumber=${verseNumber}, endVerseNumber=${endVerseNumber}`);
 		if (this.plugin?.writeLog) {
 			await this.plugin.writeLog(`Navigating to passage: ${bookName} ${chapterNumber}:${verseNumber}${endVerseNumber ? `-${endVerseNumber}` : ""}`);
 		}
 		const books = await this.generateBibleBooks(this.settings.bibleVersion);
 		const targetBook = books.find((b: any) => b.name.toLowerCase() === bookName.toLowerCase());
-		if (!targetBook) return;
+		if (!targetBook) {
+			console.log(`[Bible Sidecar Debug] Book not found: ${bookName}`);
+			return;
+		}
 
+		console.log(`[Bible Sidecar Debug] Found target book:`, targetBook);
 		const chapterContentArray = await this.getChapterContent(this.settings.bibleVersion, targetBook.bookid, chapterNumber);
 		const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
-		if (!container) return;
+		if (!container) {
+			console.log(`[Bible Sidecar Debug] Error: .chapter-container not found in DOM`);
+			return;
+		}
 
 		container.empty();
 		this.processChapterContent(chapterContentArray, container, targetBook, chapterNumber, books);
 
 		// Scroll to the specific verse and highlight range
 		setTimeout(() => {
+			console.log(`[Bible Sidecar Debug] Scroll/highlight timeout executing. Start verse: ${verseNumber}, End verse: ${endVerseNumber || verseNumber}`);
 			const start = verseNumber;
 			const end = endVerseNumber || start;
 			let firstScrollEl: HTMLElement | null = null;
@@ -220,25 +229,42 @@ export class BibleView extends ItemView {
 			// Clear any existing active verse highlighting
 			container.querySelectorAll(".active-verse").forEach(el => el.classList.remove("active-verse"));
 
+			const elements = container.querySelectorAll(".verse-num");
+			console.log(`[Bible Sidecar Debug] Found ${elements.length} elements with '.verse-num' class`);
+
 			for (let v = start; v <= end; v++) {
 				const targetSuperscript = convertToSuperscript(v.toString());
-				const elements = container.querySelectorAll(".verse-num");
+				console.log(`[Bible Sidecar Debug] Matching verse ${v} using superscript '${targetSuperscript}'`);
+				let matchedForV = false;
+				
 				elements.forEach((el: HTMLElement) => {
-					if ((el.textContent || "").trim() === targetSuperscript) {
+					const textVal = (el.textContent || "").trim();
+					if (textVal === targetSuperscript) {
+						matchedForV = true;
+						console.log(`[Bible Sidecar Debug] Success: Match found for verse ${v} on element:`, el);
 						const parentVerse = el.closest(".verse") || el.closest(".verse-inline");
 						if (parentVerse) {
+							console.log(`[Bible Sidecar Debug] Adding .active-verse to parent container:`, parentVerse);
 							parentVerse.classList.add("active-verse");
 							if (!firstScrollEl) firstScrollEl = parentVerse as HTMLElement;
 						} else {
+							console.log(`[Bible Sidecar Debug] Adding .active-verse to .verse-num directly:`, el);
 							el.classList.add("active-verse");
 							if (!firstScrollEl) firstScrollEl = el;
 						}
 					}
 				});
+
+				if (!matchedForV) {
+					console.log(`[Bible Sidecar Debug] Warning: Failed to find element matching '${targetSuperscript}' for verse ${v}`);
+				}
 			}
 
 			if (firstScrollEl) {
+				console.log(`[Bible Sidecar Debug] Scrolling to first element:`, firstScrollEl);
 				(firstScrollEl as any).scrollIntoView({ behavior: "smooth", block: "center" });
+			} else {
+				console.log(`[Bible Sidecar Debug] Warning: No scroll element identified for range ${start}-${end}`);
 			}
 		}, 150);
 	}
