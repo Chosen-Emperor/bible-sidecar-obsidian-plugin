@@ -119,7 +119,10 @@ export function compileCopyMessage(
 
 	const formattedRuns = runs.map((run) => {
 		const scriptureText = run.verses
-			.map((v) => `${convertToSuperscript(v.verse.toString())} ${v.text}`)
+			.map((v) => {
+				const vUri = `obsidian://bible?book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${v.verse}`;
+				return `[${convertToSuperscript(v.verse.toString())}](${vUri}) ${v.text}`;
+			})
 			.join(" ");
 
 		if (!settings.copyVerseReference || settings.copyFormat === "callout") {
@@ -127,7 +130,8 @@ export function compileCopyMessage(
 		}
 
 		const rangeStr = run.start === run.end ? run.start.toString() : `${run.start}-${run.end}`;
-		const uri = `obsidian://bible?book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${run.start}${run.start !== run.end ? `&endVerse=${run.end}` : ""}`;
+		const runVersesStr = run.verses.map((v) => v.verse).join(",");
+		const uri = `obsidian://bible?book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${runVersesStr}`;
 		
 		let referenceLink = "";
 		if (settings.verseReferenceInternalLinking) {
@@ -147,7 +151,8 @@ export function compileCopyMessage(
 	let finalText = formattedRuns.join("\n\n");
 
 	if (settings.copyFormat === "callout") {
-		const uri = `obsidian://bible?book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${firstVerse}${firstVerse !== lastVerse ? `&endVerse=${lastVerse}` : ""}`;
+		const allVersesStr = verses.map((v) => v.verse).join(",");
+		const uri = `obsidian://bible?book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${allVersesStr}`;
 		
 		let referenceLink = "";
 		if (settings.verseReferenceInternalLinking) {

@@ -196,7 +196,7 @@ export class BibleView extends ItemView {
 		this.loadBible();
 	}
 	
-	public async navigateToPassage(bookName: string, chapterNumber: number, verseNumber: number, endVerseNumber?: number) {
+	public async navigateToPassage(bookName: string, chapterNumber: number, verseNumber: number | string, endVerseNumber?: number) {
 		const logMsg = `[Bible Sidecar Debug] navigateToPassage called: bookName=${bookName}, chapterNumber=${chapterNumber}, verseNumber=${verseNumber}, endVerseNumber=${endVerseNumber}`;
 		console.log(logMsg);
 		if (this.plugin?.writeLog) {
@@ -229,13 +229,40 @@ export class BibleView extends ItemView {
 
 		// Scroll to the specific verse and highlight range
 		setTimeout(async () => {
-			const timeMsg = `[Bible Sidecar Debug] Scroll/highlight timeout executing. Start verse: ${verseNumber}, End verse: ${endVerseNumber || verseNumber}`;
+			const timeMsg = `[Bible Sidecar Debug] Scroll/highlight timeout executing. verseNumber: ${verseNumber}, endVerseNumber: ${endVerseNumber}`;
 			console.log(timeMsg);
 			if (this.plugin?.writeLog) await this.plugin.writeLog(timeMsg);
 			
-			const start = verseNumber;
-			const end = endVerseNumber || start;
+			const highlightVerses = new Set<number>();
+			if (typeof verseNumber === "number") {
+				const start = verseNumber;
+				const end = endVerseNumber || start;
+				for (let v = start; v <= end; v++) {
+					highlightVerses.add(v);
+				}
+			} else if (typeof verseNumber === "string") {
+				const parts = verseNumber.split(",");
+				parts.forEach(part => {
+					if (part.includes("-")) {
+						const [sStr, eStr] = part.split("-");
+						const s = parseInt(sStr);
+						const e = parseInt(eStr);
+						if (!isNaN(s) && !isNaN(e)) {
+							for (let v = s; v <= e; v++) {
+								highlightVerses.add(v);
+							}
+						}
+					} else {
+						const v = parseInt(part);
+						if (!isNaN(v)) {
+							highlightVerses.add(v);
+						}
+					}
+				});
+			}
+			
 			let firstScrollEl: HTMLElement | null = null;
+			let minVerse = Infinity;
 
 			// Clear any existing active verse highlighting
 			container.querySelectorAll(".active-verse").forEach(el => el.classList.remove("active-verse"));
@@ -245,11 +272,11 @@ export class BibleView extends ItemView {
 			console.log(countMsg);
 			if (this.plugin?.writeLog) await this.plugin.writeLog(countMsg);
 
-			for (let v = start; v <= end; v++) {
+			highlightVerses.forEach((v) => {
 				const targetSuperscript = convertToSuperscript(v.toString());
 				const checkingMsg = `[Bible Sidecar Debug] Matching verse ${v} using superscript '${targetSuperscript}'`;
 				console.log(checkingMsg);
-				if (this.plugin?.writeLog) await this.plugin.writeLog(checkingMsg);
+				if (this.plugin?.writeLog) this.plugin.writeLog(checkingMsg).catch(() => {});
 				let matchedForV = false;
 				
 				elements.forEach((el: HTMLElement) => {
@@ -263,10 +290,16 @@ export class BibleView extends ItemView {
 						const parentVerse = el.closest(".verse") || el.closest(".verse-inline");
 						if (parentVerse) {
 							parentVerse.classList.add("active-verse");
-							if (!firstScrollEl) firstScrollEl = parentVerse as HTMLElement;
+							if (v < minVerse) {
+								minVerse = v;
+								firstScrollEl = parentVerse as HTMLElement;
+							}
 						} else {
 							el.classList.add("active-verse");
-							if (!firstScrollEl) firstScrollEl = el;
+							if (v < minVerse) {
+								minVerse = v;
+								firstScrollEl = el;
+							}
 						}
 					}
 				});
@@ -274,9 +307,9 @@ export class BibleView extends ItemView {
 				if (!matchedForV) {
 					const warnMsg = `[Bible Sidecar Debug] Warning: Failed to find element matching '${targetSuperscript}' for verse ${v}`;
 					console.log(warnMsg);
-					if (this.plugin?.writeLog) await this.plugin.writeLog(warnMsg);
+					if (this.plugin?.writeLog) this.plugin.writeLog(warnMsg).catch(() => {});
 				}
-			}
+			});
 
 			if (firstScrollEl) {
 				const scrollMsg = `[Bible Sidecar Debug] Scrolling to first element in range`;
@@ -284,7 +317,7 @@ export class BibleView extends ItemView {
 				if (this.plugin?.writeLog) await this.plugin.writeLog(scrollMsg);
 				(firstScrollEl as any).scrollIntoView({ behavior: "auto", block: "center" });
 			} else {
-				const warnMsg = `[Bible Sidecar Debug] Warning: No scroll element identified for range ${start}-${end}`;
+				const warnMsg = `[Bible Sidecar Debug] Warning: No scroll element identified for verses: ${Array.from(highlightVerses).join(",")}`;
 				console.log(warnMsg);
 				if (this.plugin?.writeLog) await this.plugin.writeLog(warnMsg);
 			}

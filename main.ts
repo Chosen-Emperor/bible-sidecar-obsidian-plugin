@@ -730,10 +730,13 @@ export default class BibleSidecarPlugin extends Plugin {
 				this.app.workspace.revealLeaf(leaf);
 				if (this.view && typeof (this.view as any).navigateToPassage === "function") {
 					const endVerse = params.endVerse || params.endverse;
+					const verseParam = (params.verse && (params.verse.includes(",") || params.verse.includes("-")))
+						? params.verse
+						: parseInt(params.verse);
 					await (this.view as any).navigateToPassage(
 						params.book,
 						parseInt(params.chapter),
-						parseInt(params.verse),
+						verseParam,
 						endVerse ? parseInt(endVerse) : undefined
 					);
 				}

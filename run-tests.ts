@@ -147,29 +147,29 @@ function runTestSuite() {
     // Scenario A: Single Verse Copy
     const inputA = "¹⁶ For God so loved the world";
     const outputA = compileCopyMessage(book.name, 3, inputA, mockSettings1).finalText;
-    const expectedA = "¹⁶ For God so loved the world\n- [John 3:16](obsidian://bible?book=John&chapter=3&verse=16)";
+    const expectedA = "[¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world\n- [John 3:16](obsidian://bible?book=John&chapter=3&verse=16)";
     assert(outputA === expectedA, "Single verse copy matches exact expected format");
 
     // Scenario B: Consecutive Verses Copy
     const inputB = "¹⁶ For God so loved the world\n¹⁷ For God sent not his Son";
     const outputB = compileCopyMessage(book.name, 3, inputB, mockSettings1).finalText;
-    const expectedB = "¹⁶ For God so loved the world ¹⁷ For God sent not his Son\n- [John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16&endVerse=17)";
+    const expectedB = "[¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world [¹⁷](obsidian://bible?book=John&chapter=3&verse=17) For God sent not his Son\n- [John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16,17)";
     assert(outputB === expectedB, "Consecutive verses copy cleanly separates verses and uses correct range reference");
 
     // Scenario C: Non-Consecutive Verses Copy
     const inputC = "¹⁶ For God so loved the world\n¹⁸ He that believeth on him";
     const outputC = compileCopyMessage(book.name, 3, inputC, mockSettings1).finalText;
-    const expectedC = "¹⁶ For God so loved the world\n- [John 3:16](obsidian://bible?book=John&chapter=3&verse=16)\n\n¹⁸ He that believeth on him\n- [John 3:18](obsidian://bible?book=John&chapter=3&verse=18)";
+    const expectedC = "[¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world\n- [John 3:16](obsidian://bible?book=John&chapter=3&verse=16)\n\n[¹⁸](obsidian://bible?book=John&chapter=3&verse=18) He that believeth on him\n- [John 3:18](obsidian://bible?book=John&chapter=3&verse=18)";
     assert(outputC === expectedC, "Non-consecutive verses copy parses as distinct runs separated by blank line");
 
     // Scenario D: Callout formatting with Wiki Link
     const outputD = compileCopyMessage(book.name, 3, inputB, mockSettingsCallout).finalText;
-    const expectedD = "> [!quote] [[John]] [3:16-17](obsidian://bible?book=John&chapter=3&verse=16&endVerse=17)\n> ¹⁶ For God so loved the world ¹⁷ For God sent not his Son";
+    const expectedD = "> [!quote] [[John]] [3:16-17](obsidian://bible?book=John&chapter=3&verse=16,17)\n> [¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world [¹⁷](obsidian://bible?book=John&chapter=3&verse=17) For God sent not his Son";
     assert(outputD === expectedD, "Callout mode wraps lines in a premium callout with wiki-links");
 
     // Scenario E: Short Reference Format
     const outputE = compileCopyMessage(book.name, 3, inputB, mockSettingsShortRef).finalText;
-    const expectedE = "¹⁶ For God so loved the world ¹⁷ For God sent not his Son\n- [3:16-17](obsidian://bible?book=John&chapter=3&verse=16&endVerse=17)";
+    const expectedE = "[¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world [¹⁷](obsidian://bible?book=John&chapter=3&verse=17) For God sent not his Son\n- [3:16-17](obsidian://bible?book=John&chapter=3&verse=16,17)";
     assert(outputE === expectedE, "Short reference format omits book name in link label");
     console.log();
 
@@ -182,7 +182,7 @@ function runTestSuite() {
         { verse: 16, text: "For God so loved the world" },
         { verse: 17, text: "For God sent not his Son" }
     ];
-    const refText = "[John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16&endVerse=17)";
+    const refText = "[John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16,17)";
 
     const mockSettingsAutoPlain = {
         copyFormat: "plain",
@@ -208,17 +208,17 @@ function runTestSuite() {
 
     // Test standard +p
     const resP = compileAutoExpandOutput(versesData, "John", 3, "p", refText, mockSettingsAutoPlain);
-    const expP = "[¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world [¹⁷](obsidian://bible?book=John&chapter=3&verse=17) For God sent not his Son\n- [John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16&endVerse=17)";
+    const expP = "[¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world [¹⁷](obsidian://bible?book=John&chapter=3&verse=17) For God sent not his Son\n- [John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16,17)";
     assert(resP === expP, "+p mode puts scripture on one space-separated line with reference");
 
     // Test new +l with plain style
     const resL = compileAutoExpandOutput(versesData, "John", 3, "l", refText, mockSettingsAutoPlain);
-    const expL = "[¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world\n[¹⁷](obsidian://bible?book=John&chapter=3&verse=17) For God sent not his Son\n- [John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16&endVerse=17)";
+    const expL = "[¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world\n[¹⁷](obsidian://bible?book=John&chapter=3&verse=17) For God sent not his Son\n- [John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16,17)";
     assert(resL === expL, "+l mode puts each verse on a new line with reference");
 
     // Test new +l with callout style
     const resLCallout = compileAutoExpandOutput(versesData, "John", 3, "l", refText, mockSettingsAutoCallout);
-    const expLCallout = "> [¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world\n> [¹⁷](obsidian://bible?book=John&chapter=3&verse=17) For God sent not his Son\n> - [John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16&endVerse=17)";
+    const expLCallout = "> [¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world\n> [¹⁷](obsidian://bible?book=John&chapter=3&verse=17) For God sent not his Son\n> - [John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16,17)";
     assert(resLCallout === expLCallout, "+l mode callout format prefixes all lines with '> '");
 
     assert(resL === expL, "+l mode correctly expands with scripture + reference");
@@ -280,12 +280,12 @@ function runTestSuite() {
 
     // Test +p with Sermon Callout Highlight
     const resSermonP = compileAutoExpandOutput(versesData, "John", 3, "p", refText, mockSettingsSermonP);
-    const expSermonP = "> [!info] Sermon Passage: [John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16&endVerse=17)\n> [¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world [¹⁷](obsidian://bible?book=John&chapter=3&verse=17) For God sent not his Son";
+    const expSermonP = "> [!info] Sermon Passage: [John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16,17)\n> [¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world [¹⁷](obsidian://bible?book=John&chapter=3&verse=17) For God sent not his Son";
     assert(resSermonP === expSermonP, "Sermon +p mode wraps expansion in colored callout with dynamic title");
 
     // Test +l with Sermon Callout Highlight
     const resSermonL = compileAutoExpandOutput(versesData, "John", 3, "l", refText, mockSettingsSermonL);
-    const expSermonL = "> [!todo] Focus Verse: [John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16&endVerse=17)\n> [¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world\n> [¹⁷](obsidian://bible?book=John&chapter=3&verse=17) For God sent not his Son";
+    const expSermonL = "> [!todo] Focus Verse: [John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16,17)\n> [¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world\n> [¹⁷](obsidian://bible?book=John&chapter=3&verse=17) For God sent not his Son";
     assert(resSermonL === expSermonL, "Sermon +l mode wraps expansion in colored callout on multiple lines");
 
     // Test +q (scripture-only) with Sermon Callout Highlight
@@ -306,11 +306,11 @@ function runTestSuite() {
     };
 
     const resPerModeP = compileAutoExpandOutput(versesData, "John", 3, "p", refText, mockSettingsPerModeStyles);
-    const expPerModeP = "**[¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world [¹⁷](obsidian://bible?book=John&chapter=3&verse=17) For God sent not his Son**\n- **[John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16&endVerse=17)**";
+    const expPerModeP = "**[¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world [¹⁷](obsidian://bible?book=John&chapter=3&verse=17) For God sent not his Son**\n- **[John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16,17)**";
     assert(resPerModeP === expPerModeP, "Separate per-mode styles: +p scripture and reference formatted as bold");
 
     const resPerModeL = compileAutoExpandOutput(versesData, "John", 3, "l", refText, mockSettingsPerModeStyles);
-    const expPerModeL = "[¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world\n[¹⁷](obsidian://bible?book=John&chapter=3&verse=17) For God sent not his Son\n- [John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16&endVerse=17)";
+    const expPerModeL = "[¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world\n[¹⁷](obsidian://bible?book=John&chapter=3&verse=17) For God sent not his Son\n- [John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16,17)";
     assert(resPerModeL === expPerModeL, "Separate per-mode styles: +l scripture and reference formatted as plain");
 
     // Test Color Jesus's words in red
