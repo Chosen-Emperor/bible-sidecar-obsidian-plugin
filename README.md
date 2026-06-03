@@ -26,7 +26,13 @@ This plugin provides a Bible sidecar panel within Obsidian, allowing you to read
 
 ## Settings
 
--   **Bible Version:** Choose your preferred Bible version (e.g., KJV, ESV, NLT).
+-   **Bible language:** Pick the Bible language for your preferred translations.
+-   **Bible version:** Choose a specific Bible translation in the selected language.
+-   **Copy format:** Copy scripture as plain text or Markdown callout.
+-   **Reference options:** Enable verse references, choose prefix style, format style, and wiki-link behavior.
+-   **Auto-expand Bible references:** Type shortcuts like `--John 3:16 +p` to automatically expand verse references while editing.
+-   **Auto-expand reference style:** Choose whether automatically inserted reference links are plain, italic, bold, or bold-italic.
+-   **Auto-expand scripture style:** Choose whether fetched scripture text is plain, italic, bold, or bold-italic when expanded in the editor.
 
 ## Development
 

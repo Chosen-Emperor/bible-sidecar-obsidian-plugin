@@ -1,5 +1,6 @@
-import BibleSidecarPlugin from "main";
-import { App, PluginSettingTab, Setting } from "obsidian";
+import BibleSidecarPlugin, { DEFAULT_SETTINGS } from "main";
+import { App, PluginSettingTab, Setting, requestUrl, Notice } from "obsidian";
+
 
 export class BibleSidecarSettingsTab extends PluginSettingTab {
 	plugin: BibleSidecarPlugin;
@@ -12,7 +13,7 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 
 	display() {
 		const LANGUAGE_DEFAULT_VERSIONS: Record<string, string> = {
-			en: "NLT",
+			en: "ESV",
 			de: "ELB",
 			fr: "NBS",
 			es: "BTX3",
@@ -21,7 +22,8 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 			nl: "NLD",
 			ru: "SYNOD",
 			ar: "SVD",
-			in: "TB"
+			in: "TB",
+			af: "AFR53",
 		};
 		const { containerEl } = this;
 		containerEl.empty(); // Clear the container if it's not empty
@@ -30,6 +32,7 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 			.setDesc("Choose your preferred Bible language")
 			.addDropdown((dropdown: any) => {
 				dropdown.addOption("en", "English | English");
+				dropdown.addOption("af", "Afrikaans | Afrikaans");
 				dropdown.addOption("es", "Spanish | Español");
 				dropdown.addOption("fr", "French | Français");
 				dropdown.addOption("de", "German | Deutsch");
@@ -43,10 +46,25 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.bibleLanguage)
 				.onChange((value: any) => {
 					this.plugin.settings.bibleLanguage = value;
-					// Set the default version based on the selected language
-					this.plugin.settings.bibleVersion =
-						LANGUAGE_DEFAULT_VERSIONS[value] ||
-						LANGUAGE_DEFAULT_VERSIONS["en"]; // Fallback to English if not found
+					const languageAvailableVersions: Record<string, string[]> = {
+						en: ["YLT", "KJV", "NKJV", "WEB", "RSV", "CJB", "TS2009", "LXXE", "TLV", "LSB", "NASB", "ESV", "GNV", "DRB", "NIV2011", "NIV", "NLT", "NRSVCE", "NET", "NJB1985", "SPE", "LBP", "AMP", "MSG", "LSV", "BSB"],
+						de: ["MB", "ELB", "SCH", "LUT"],
+						fr: ["NBS"],
+						es: ["BTX3", "RV2004", "PDT", "NVI", "NTV", "LBLA"],
+						pt: ["ARA", "NTJud", "NVIPT", "OL", "NVT", "KJA", "VFL", "NAA", "CNBB", "NBV07", "ALM21", "ARC09"],
+						it: ["NR06", "VULG"],
+						nl: ["NLD", "DSV", "SVRJ", "HSV17"],
+						ru: ["JNT", "NRT", "SYNOD", "TNHR", "RBS2", "BTI"],
+						ar: ["SVD"],
+						in: ["TB"],
+						af: ["AFR53"],
+					};
+					const available = languageAvailableVersions[value] || [];
+					if (!available.includes(this.plugin.settings.bibleVersion)) {
+						this.plugin.settings.bibleVersion =
+							LANGUAGE_DEFAULT_VERSIONS[value] ||
+							LANGUAGE_DEFAULT_VERSIONS["en"]; // Fallback to English if not found
+					}
 					// Update the dropdown for the default version
 					const defaultVersionDropdown =
 						containerEl.querySelector(
@@ -178,6 +196,9 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 			if(this.plugin.settings.bibleLanguage === "in"){
 				dropdown.addOption("TB", "Terjemahan Baru");
 				}
+			if(this.plugin.settings.bibleLanguage === "af"){
+				dropdown.addOption("AFR53", "Afrikaanse Bybel 1933/1953");
+			}
 
 
 				dropdown
@@ -188,6 +209,67 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 						this.plugin.saveSettings();
 					});
 			});
+
+		// Offline Translation Downloader Section
+		const currentVersion = this.plugin.settings.bibleVersion;
+		const downloaderSetting = new Setting(containerEl)
+			.setName(`Offline Manager: ${currentVersion}`)
+			.setDesc("Checking download status...");
+
+		const isEsvApi = this.plugin.settings.esvApiEnabled && 
+		                 this.plugin.settings.esvApiKey.trim() && 
+		                 currentVersion.toUpperCase() === "ESV";
+		const isApiBible = this.plugin.settings.apiBibleEnabled && 
+		                   this.plugin.settings.apiBibleKey.trim() && 
+		                   this.plugin.settings.apiBibleVersionId;
+		const isPremiumApi = isEsvApi || isApiBible;
+
+		this.plugin.isTranslationDownloaded(currentVersion).then((isDownloaded) => {
+			downloaderSetting.setDesc(""); // Clear description
+			if (isDownloaded) {
+				downloaderSetting.setName(`Offline Manager: ${currentVersion} (${isPremiumApi ? "Cached" : "Downloaded"})`);
+				downloaderSetting.setDesc(isPremiumApi 
+					? "✅ Premium cached chapters are ready for offline reading and full-text search."
+					: "✅ Ready for offline reading and full-text search.");
+				downloaderSetting.addButton((btn) => {
+					btn.setButtonText(isPremiumApi ? "Clear Premium Cache" : "Delete Download")
+						.setWarning()
+						.onClick(async () => {
+							btn.setDisabled(true);
+							await this.plugin.deleteTranslation(currentVersion);
+							new Notice(isPremiumApi ? `Cleared local premium cache: ${currentVersion}` : `Deleted local translation: ${currentVersion}`);
+							this.display();
+						});
+				});
+			} else {
+				if (isPremiumApi) {
+					downloaderSetting.setName(`Offline Manager: ${currentVersion} (Auto-Caching)`);
+					downloaderSetting.setDesc("⚡ On-Demand Premium Auto-Caching is Active. To comply with copyright guidelines and strict rate limits (60 requests/min), bulk downloading is disabled. Instead, chapters are automatically saved locally as you browse them online, so they become available offline!");
+				} else {
+					downloaderSetting.setName(`Offline Manager: ${currentVersion} (Online)`);
+					downloaderSetting.setDesc("⚠️ Not downloaded. Click download below to enable offline access and search.");
+					downloaderSetting.addButton((btn) => {
+						btn.setButtonText(`Download ${currentVersion}`)
+							.setCta()
+							.onClick(async () => {
+								btn.setDisabled(true);
+								btn.setButtonText("Starting download...");
+								try {
+									await this.plugin.downloadTranslation(currentVersion, (progress) => {
+										btn.setButtonText(`Downloading ${progress}%...`);
+									});
+									new Notice(`Successfully downloaded ${currentVersion} for offline use!`);
+								} catch (err) {
+									console.error(err);
+									new Notice(`Failed to download ${currentVersion}: ${err.message || err}`);
+								}
+								this.display();
+							});
+					});
+				}
+			}
+		});
+
 		new Setting(containerEl)
 			.setName("Copy format").setHeading()
 			.setDesc("Choose how you want the Bible text to be copied")
@@ -211,26 +293,263 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 						this.plugin.settings.copyVerseReference = value;
 						this.plugin.saveSettings();
 
-						// Show/hide the "Verse Reference Format" setting based on the toggle value
-						verseReferenceListSetting.settingEl.style.display =
+						verseReferencePrefixSetting.settingEl.style.display =
 							value ? "block" : "none";
 						verseReferenceFormatSetting.settingEl.style.display =
 							value ? "block" : "none";
 						verseReferenceInternalLinkingSetting.settingEl.style.display =
 							value ? "block" : "none";
-							this.display();
 					});
-					
 			});
-			
 
-		// Create the "Verse Reference Format" setting, but initially hide it
-		const verseReferenceListSetting = new Setting(containerEl)
-			.setName("Verse reference format")
-			.setDesc("Choose the style of the verse reference")
+		new Setting(containerEl)
+			.setName("Auto-expand Bible references")
+			.setDesc(
+				"Enable typed Bible reference shortcuts such as `--John 3:16 +p` or `--John 3:16 +q` to expand references automatically."
+			)
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.autoExpandBibleReferences)
+					.onChange((value) => {
+						this.plugin.settings.autoExpandBibleReferences = value;
+						this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName("Color Jesus's words in red (Gospels only)")
+			.setDesc("Highlights all quoted text in the Gospels (Matthew, Mark, Luke, John) in red. Works for modern translations that use quotation marks (e.g. ESV, NIV, NLT, NASB).")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.gospelQuotesRed)
+					.onChange((value) => {
+						this.plugin.settings.gospelQuotesRed = value;
+						this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName("Hide link icon on Bible references")
+			.setDesc("Hides the default Obsidian external link arrow icon next to Bible reference links to keep notes clean.")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.hideLinkIcon)
+					.onChange((value) => {
+						this.plugin.settings.hideLinkIcon = value;
+						this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName("Separate verses in sidecar view")
+			.setDesc("When enabled, each verse in the sidecar view is rendered on its own line. When disabled, verses flow as a continuous paragraph.")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.separateVersesSidecar)
+					.onChange((value) => {
+						this.plugin.settings.separateVersesSidecar = value;
+						this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName("Abbreviate book names in sidecar")
+			.setDesc("When enabled, book cards and sidebar headers will display standard 3-letter abbreviations (e.g. GEN, EXO) instead of full names.")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.abbreviateBookNames)
+					.onChange((value) => {
+						this.plugin.settings.abbreviateBookNames = value;
+						this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName("Enable developer logging")
+			.setDesc("Creates a bible-sidecar-debug.log file inside the plugin folder to help diagnose HTML parsing issues.")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.enableLogging)
+					.onChange((value) => {
+						this.plugin.settings.enableLogging = value;
+						this.plugin.saveSettings();
+					});
+			});
+
+		const premiumDetails = containerEl.createEl("details", { cls: "bible-settings-details" });
+		premiumDetails.createEl("summary", { text: "Premium API Providers (ESV API & API.Bible)", cls: "bible-settings-summary" });
+		const premiumContent = premiumDetails.createDiv({ cls: "bible-settings-content" });
+
+		// ESV API Section
+		premiumContent.createEl("h4", { text: "ESV API Configuration (Crossway)", cls: "bible-settings-subheading" });
+		let esvApiKeySetting: Setting;
+
+		new Setting(premiumContent)
+			.setName("Use ESV API")
+			.setDesc("Enable the ESV API service to fetch the ESV translation directly from Crossway with premium stanzas and red stanzas.")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.esvApiEnabled)
+					.onChange((value) => {
+						this.plugin.settings.esvApiEnabled = value;
+						this.plugin.saveSettings();
+						
+						esvApiKeySetting.settingEl.style.display = value ? "flex" : "none";
+					});
+			});
+
+		esvApiKeySetting = new Setting(premiumContent)
+			.setName("ESV API Key")
+			.setDesc("Your non-commercial API key from api.esv.org")
+			.addText((text) => {
+				text
+					.setPlaceholder("Enter your ESV API key")
+					.setValue(this.plugin.settings.esvApiKey)
+					.onChange((value) => {
+						this.plugin.settings.esvApiKey = value;
+						this.plugin.saveSettings();
+					});
+			})
+			.addButton((btn) => {
+				btn.setButtonText("Connect")
+					.setCta()
+					.onClick(() => {
+						this.display(); // Re-render setting display
+					});
+			});
+
+		// Initial visibility
+		const isEsvApiEnabled = this.plugin.settings.esvApiEnabled;
+		esvApiKeySetting.settingEl.style.display = isEsvApiEnabled ? "flex" : "none";
+
+		premiumContent.createEl("hr", { cls: "bible-settings-inner-divider" });
+
+		// API.Bible Section
+		premiumContent.createEl("h4", { text: "API.Bible Configuration (Premium Formatting)", cls: "bible-settings-subheading" });
+		let apiKeySetting: Setting;
+		let apiVersionSetting: Setting;
+
+		new Setting(premiumContent)
+			.setName("Use API.Bible")
+			.setDesc("Enable the API.Bible service to unlock premium formatting (poetry, paragraphs, etc.). Falls back to bolls.life if the key is invalid or missing.")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.apiBibleEnabled)
+					.onChange((value) => {
+						this.plugin.settings.apiBibleEnabled = value;
+						this.plugin.saveSettings();
+						
+						apiKeySetting.settingEl.style.display = value ? "flex" : "none";
+						apiVersionSetting.settingEl.style.display = value ? "flex" : "none";
+					});
+			});
+
+		apiKeySetting = new Setting(premiumContent)
+			.setName("API.Bible Key")
+			.setDesc("Your non-commercial API key from scripture.api.bible")
+			.addText((text) => {
+				text
+					.setPlaceholder("Enter your API key")
+					.setValue(this.plugin.settings.apiBibleKey)
+					.onChange((value) => {
+						this.plugin.settings.apiBibleKey = value;
+						this.plugin.apiBiblesCache = null; // Clear cache on key change
+						this.plugin.saveSettings();
+					});
+			})
+			.addButton((btn) => {
+				btn.setButtonText("Connect")
+					.setCta()
+					.onClick(() => {
+						this.plugin.apiBiblesCache = null; // Clear cache to force reload
+						this.display(); // Re-render to trigger fetch
+					});
+			});
+
+		// Trigger background fetch if enabled, has key, and cache is null
+		const hasKey = this.plugin.settings.apiBibleKey.trim().length > 0;
+		if (this.plugin.settings.apiBibleEnabled && hasKey && !this.plugin.apiBiblesCache) {
+			this.plugin.apiBiblesCache = []; // Set to empty to avoid duplicate concurrent fetches
+			requestUrl({
+				url: "https://api.scripture.api.bible/v1/bibles",
+				headers: { "api-key": this.plugin.settings.apiBibleKey.trim() }
+			}).then((res: any) => {
+				if (res.status === 200 && res.json?.data) {
+					this.plugin.apiBiblesCache = res.json.data.map((b: any) => ({
+						id: b.id,
+						name: `${b.name} (${b.abbreviation})`
+					}));
+					this.display(); // Re-render to populate dropdown!
+				} else {
+					this.plugin.apiBiblesCache = [{ id: "error", name: "Error loading translations" }];
+					this.display();
+				}
+			}).catch((err: any) => {
+				console.error("Error fetching API.Bible list:", err);
+				this.plugin.apiBiblesCache = [{ id: "error", name: "Error loading translations" }];
+				this.display();
+			});
+		}
+
+		apiVersionSetting = new Setting(premiumContent)
+			.setName("API.Bible Version")
+			.setDesc("Choose your preferred Bible version");
+
+		if (this.plugin.settings.apiBibleEnabled && hasKey) {
+			if (this.plugin.apiBiblesCache && this.plugin.apiBiblesCache.length > 0) {
+				const isError = this.plugin.apiBiblesCache[0].id === "error";
+				if (isError) {
+					apiVersionSetting.setDesc("Failed to load versions. Please check your API key.");
+				} else {
+					apiVersionSetting.addDropdown((dropdown) => {
+						this.plugin.apiBiblesCache?.forEach((bible) => {
+							dropdown.addOption(bible.id, bible.name);
+						});
+						dropdown
+							.setValue(this.plugin.settings.apiBibleVersionId)
+							.onChange((value) => {
+								this.plugin.settings.apiBibleVersionId = value;
+								this.plugin.saveSettings();
+							});
+					});
+				}
+			} else if (this.plugin.apiBiblesCache && this.plugin.apiBiblesCache.length === 0) {
+				apiVersionSetting.setDesc("Fetching available Bible versions...");
+			} else {
+				apiVersionSetting.setDesc("Failed to load versions. Please check your API key.");
+			}
+		} else {
+			apiVersionSetting.setDesc("Enter a valid API.Bible Key to choose a version.");
+		}
+
+		// Initial visibility
+		const isApiEnabled = this.plugin.settings.apiBibleEnabled;
+		apiKeySetting.settingEl.style.display = isApiEnabled ? "flex" : "none";
+		apiVersionSetting.settingEl.style.display = isApiEnabled ? "flex" : "none";
+
+
+		new Setting(containerEl)
+			.setName("Auto-expand reference style (no flag)")
+			.setDesc("Choose the formatting applied to reference links when expanded without a flag (e.g. --John 3:16 ).")
+			.addDropdown((dropdown: any) => {
+				dropdown.addOption("plain", "Plain");
+				dropdown.addOption("italic", "Italic");
+				dropdown.addOption("bold", "Bold");
+				dropdown.addOption("boldItalic", "Bold + Italic");
+				dropdown
+					.setValue(this.plugin.settings.autoExpandReferenceStyle)
+					.onChange((value: string) => {
+						this.plugin.settings.autoExpandReferenceStyle = value;
+						this.plugin.saveSettings();
+					});
+			});
+
+		const verseReferencePrefixSetting = new Setting(containerEl)
+			.setName("Reference prefix style")
+			.setDesc("Choose the prefix used before copied verse references")
 			.addDropdown((dropdown) => {
 				dropdown.addOption("- ", "List (-)");
-				dropdown.addOption(">", "Callout (>)");
+				dropdown.addOption("> ", "Callout (>)");
 				dropdown.addOption("-- ", "Double Dash (--)");
 				dropdown.addOption("~", "Tilde (~)");
 				dropdown
@@ -240,13 +559,11 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 						this.plugin.saveSettings();
 					});
 			});
-			const verseReferenceFormatSetting = new Setting(containerEl)
+		const verseReferenceFormatSetting = new Setting(containerEl)
 			.setName("Verse reference format")
 			.setDesc("Choose the format of the verse reference")
 			.addDropdown((dropdown) => {
 				dropdown.addOption("full", "Full (e.g. John 3:16)");
-				//TODO: Figure out a way to make this possible from the api side of things:
-				// dropdown.addOption("medium", "Medium (e.g. Jn 3:16)");
 				dropdown.addOption("short", "Short (e.g. 1:1)");
 				dropdown
 					.setValue(this.plugin.settings.verseReferenceFormat)
@@ -254,27 +571,155 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 						this.plugin.settings.verseReferenceFormat = value;
 						this.plugin.saveSettings();
 					});
-			}
-			);
-			const verseReferenceInternalLinkingSetting = new Setting(containerEl)
+			});
+		const verseReferenceInternalLinkingSetting = new Setting(containerEl)
 			.setName("Enable internal linking eg. [[John]]")
-			.setDesc("Choose the format of the verse reference")
+			.setDesc("Use Obsidian wiki-links when copying or converting verse references")
 			.addToggle((toggle) => {
 				toggle
 					.setValue(this.plugin.settings.verseReferenceInternalLinking)
 					.onChange((value) => {
 						this.plugin.settings.verseReferenceInternalLinking = value;
 						this.plugin.saveSettings();
-						
-							this.display();
 					});
-			}
-			);
+			});
 		// Hide the "Verse Reference Format" setting initially
 		if (!this.plugin.settings.copyVerseReference) {
-			verseReferenceListSetting.settingEl.style.display = "none";
+			verseReferencePrefixSetting.settingEl.style.display = "none";
 			verseReferenceFormatSetting.settingEl.style.display = "none";
 			verseReferenceInternalLinkingSetting.settingEl.style.display = "none";
 		}
+
+		// --- Auto-Expand Options (+p, +l, +q) ---
+		const expandDetails = containerEl.createEl("details", { cls: "bible-settings-details" });
+		expandDetails.createEl("summary", { text: "Auto-Expand Options (+p, +l, +q)", cls: "bible-settings-summary" });
+		const expandContent = expandDetails.createDiv({ cls: "bible-settings-content" });
+
+		const addModeSettings = (
+			modeLabel: string, 
+			refStyleKey: "autoExpandReferenceStyle_p" | "autoExpandReferenceStyle_l" | "autoExpandReferenceStyle_q",
+			scriptStyleKey: "autoExpandScriptureStyle_p" | "autoExpandScriptureStyle_l" | "autoExpandScriptureStyle_q",
+			toggleKey: "autoExpandCallout_p" | "autoExpandCallout_l" | "autoExpandCallout_q",
+			typeKey: "autoExpandCalloutType_p" | "autoExpandCalloutType_l" | "autoExpandCalloutType_q",
+			titleKey: "autoExpandCalloutTitle_p" | "autoExpandCalloutTitle_l" | "autoExpandCalloutTitle_q"
+		) => {
+			let typeSetting: Setting;
+			let titleSetting: Setting;
+
+			// 1. Scripture Style Dropdown
+			new Setting(expandContent)
+				.setName(`${modeLabel} Scripture Style`)
+				.setDesc(`Choose the style applied to the scripture text in ${modeLabel} mode`)
+				.addDropdown((dropdown) => {
+					dropdown.addOption("plain", "Plain");
+					dropdown.addOption("italic", "Italic");
+					dropdown.addOption("bold", "Bold");
+					dropdown.addOption("boldItalic", "Bold + Italic");
+					dropdown
+						.setValue(this.plugin.settings[scriptStyleKey])
+						.onChange((value) => {
+							this.plugin.settings[scriptStyleKey] = value;
+							this.plugin.saveSettings();
+						});
+				});
+
+			// 2. Reference Link Style Dropdown
+			new Setting(expandContent)
+				.setName(`${modeLabel} Reference Style`)
+				.setDesc(`Choose the style applied to the reference link in ${modeLabel} mode`)
+				.addDropdown((dropdown) => {
+					dropdown.addOption("plain", "Plain");
+					dropdown.addOption("italic", "Italic");
+					dropdown.addOption("bold", "Bold");
+					dropdown.addOption("boldItalic", "Bold + Italic");
+					dropdown
+						.setValue(this.plugin.settings[refStyleKey])
+						.onChange((value) => {
+							this.plugin.settings[refStyleKey] = value;
+							this.plugin.saveSettings();
+						});
+				});
+
+			// 3. Callout Toggle
+			new Setting(expandContent)
+				.setName(`Wrap ${modeLabel} expansions in Callout`)
+				.setDesc(`Turn on to wrap ${modeLabel} scripture outputs in a colored Obsidian Callout block`)
+				.addToggle((toggle) => {
+					toggle
+						.setValue(this.plugin.settings[toggleKey])
+						.onChange((value) => {
+							this.plugin.settings[toggleKey] = value;
+							this.plugin.saveSettings();
+							
+							typeSetting.settingEl.style.display = value ? "flex" : "none";
+							titleSetting.settingEl.style.display = value ? "flex" : "none";
+						});
+				});
+
+			// 4. Callout Type Dropdown
+			typeSetting = new Setting(expandContent)
+				.setName(`${modeLabel} Callout Color / Type`)
+				.setDesc("Choose the style and color of the callout box")
+				.addDropdown((dropdown) => {
+					dropdown.addOption("quote", "Quote (Muted Green/Grey)");
+					dropdown.addOption("note", "Note (Blue)");
+					dropdown.addOption("info", "Info (Teal)");
+					dropdown.addOption("todo", "Todo (Bright Blue)");
+					dropdown.addOption("tip", "Tip / Hint (Green)");
+					dropdown.addOption("success", "Success (Green)");
+					dropdown.addOption("question", "Question / Help (Yellow/Orange)");
+					dropdown.addOption("warning", "Warning (Orange)");
+					dropdown.addOption("danger", "Danger / Failure (Red)");
+					dropdown.addOption("bug", "Bug (Red)");
+					dropdown
+						.setValue(this.plugin.settings[typeKey])
+						.onChange((value) => {
+							this.plugin.settings[typeKey] = value;
+							this.plugin.saveSettings();
+						});
+				});
+
+			// 5. Callout Title Template Input
+			titleSetting = new Setting(expandContent)
+				.setName(`${modeLabel} Callout Title Template`)
+				.setDesc("Use {{reference}} to insert the passage name dynamically (e.g. John 3:16)")
+				.addText((text) => {
+					text
+						.setPlaceholder("e.g. Scripture: {{reference}}")
+						.setValue(this.plugin.settings[titleKey])
+						.onChange((value) => {
+							this.plugin.settings[titleKey] = value;
+							this.plugin.saveSettings();
+						});
+				});
+
+			// Initial visibility
+			const isEnabled = this.plugin.settings[toggleKey];
+			typeSetting.settingEl.style.display = isEnabled ? "flex" : "none";
+			titleSetting.settingEl.style.display = isEnabled ? "flex" : "none";
+		};
+
+		addModeSettings("+p (Inline Style)", "autoExpandReferenceStyle_p", "autoExpandScriptureStyle_p", "autoExpandCallout_p", "autoExpandCalloutType_p", "autoExpandCalloutTitle_p");
+		addModeSettings("+l (Newline Style)", "autoExpandReferenceStyle_l", "autoExpandScriptureStyle_l", "autoExpandCallout_l", "autoExpandCalloutType_l", "autoExpandCalloutTitle_l");
+		addModeSettings("+q (Scripture Only)", "autoExpandReferenceStyle_q", "autoExpandScriptureStyle_q", "autoExpandCallout_q", "autoExpandCalloutType_q", "autoExpandCalloutTitle_q");
+
+		containerEl.createEl("hr", { cls: "bible-settings-divider" });
+
+		new Setting(containerEl)
+			.setName("Reset to default settings")
+			.setDesc("Warning: This will clear all custom templates, API keys, and configurations, restoring the plugin to its original out-of-the-box state.")
+			.addButton((btn) => {
+				btn.setButtonText("Reset to Defaults")
+					.setWarning()
+					.onClick(async () => {
+						const confirmReset = confirm("Are you sure you want to reset all settings to defaults?");
+						if (confirmReset) {
+							this.plugin.settings = Object.assign({}, DEFAULT_SETTINGS) as any;
+							await this.plugin.saveSettings();
+							new Notice("Bible Sidecar settings have been successfully reset to defaults.");
+							this.display();
+						}
+					});
+			});
 	}
 }
