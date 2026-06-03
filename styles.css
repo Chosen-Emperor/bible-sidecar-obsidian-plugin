@@ -949,8 +949,16 @@ body.bible-hide-link-icons a.external-link[href^="obsidian://bible"] svg {
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    width: 32px;
+    width: 0;
     height: 28px;
+    opacity: 0;
+    overflow: hidden;
+    transition: width var(--sidecar-transition), opacity var(--sidecar-transition);
+}
+
+.is-offline-view .bible-tabs-right-slot {
+    width: 32px;
+    opacity: 1;
 }
 
 /* Outage icon button inside reserved slots */
