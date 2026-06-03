@@ -15,7 +15,7 @@
 }
 
 /* Base Wrapper & Container Styles */
-[data-type="bible-view"] .bible-wrapper {
+[data-type="bible-view-plus"] .bible-wrapper {
     height: 100%;
     display: flex;
     flex-direction: column;
@@ -23,7 +23,7 @@
     background-color: var(--background-primary);
 }
 
-[data-type="bible-view"] .chapter-container {
+[data-type="bible-view-plus"] .chapter-container {
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -34,14 +34,14 @@
 }
 
 /* Custom Scrollbar */
-[data-type="bible-view"] .chapter-container::-webkit-scrollbar {
+[data-type="bible-view-plus"] .chapter-container::-webkit-scrollbar {
     width: 6px;
 }
-[data-type="bible-view"] .chapter-container::-webkit-scrollbar-thumb {
+[data-type="bible-view-plus"] .chapter-container::-webkit-scrollbar-thumb {
     background-color: var(--scrollbar-thumb-color);
     border-radius: 4px;
 }
-[data-type="bible-view"] .chapter-container::-webkit-scrollbar-track {
+[data-type="bible-view-plus"] .chapter-container::-webkit-scrollbar-track {
     background-color: transparent;
 }
 
@@ -292,7 +292,7 @@
 }
 
 /* Bulletproof SVG icon visibility and styling overrides for iPadOS/WebKit compatibility */
-[data-type="bible-view"] svg {
+[data-type="bible-view-plus"] svg {
     stroke: currentColor !important;
     fill: none !important;
     stroke-width: 2.25px !important;
@@ -313,7 +313,7 @@
 }
 
 /* Premium Reading View Spacing & Layout */
-[data-type="bible-view"] .chapter-content {
+[data-type="bible-view-plus"] .chapter-content {
     user-select: text;
     -webkit-user-select: text;
     cursor: text;
@@ -324,12 +324,12 @@
     font-family: var(--font-text);
 }
 
-[data-type="bible-view"] .chapter-content.inline-layout {
+[data-type="bible-view-plus"] .chapter-content.inline-layout {
     display: block;
     line-height: 1.65;
 }
 
-[data-type="bible-view"] .verse {
+[data-type="bible-view-plus"] .verse {
     position: relative;
     padding: 6px 12px;
     border-radius: var(--sidecar-radius);
@@ -340,11 +340,11 @@
     margin: 1px 0;
 }
 
-[data-type="bible-view"] .verse:hover {
+[data-type="bible-view-plus"] .verse:hover {
     background-color: var(--sidecar-hover-bg);
 }
 
-[data-type="bible-view"] .verse-inline {
+[data-type="bible-view-plus"] .verse-inline {
     display: inline;
     line-height: 1.65;
     font-size: var(--font-normal);
@@ -353,7 +353,7 @@
     transition: var(--sidecar-transition);
 }
 
-[data-type="bible-view"] .verse-inline:hover {
+[data-type="bible-view-plus"] .verse-inline:hover {
     background-color: var(--sidecar-hover-bg);
 }
 
@@ -373,21 +373,21 @@
     }
 }
 
-[data-type="bible-view"] .verse.active-verse {
+[data-type="bible-view-plus"] .verse.active-verse {
     border-left: 3px solid var(--interactive-accent);
     border-radius: 0 var(--sidecar-radius) var(--sidecar-radius) 0;
     animation: activeVersePulse 2s ease-in-out 3;
     animation-fill-mode: forwards;
 }
 
-[data-type="bible-view"] .verse-inline.active-verse {
+[data-type="bible-view-plus"] .verse-inline.active-verse {
     border-bottom: 2px solid var(--interactive-accent);
     animation: activeVersePulse 2s ease-in-out 3;
     animation-fill-mode: forwards;
 }
 
 /* Verse number formatting */
-[data-type="bible-view"] .verse-num {
+[data-type="bible-view-plus"] .verse-num {
     color: var(--text-accent);
     font-weight: 700;
     margin-right: 4px;
@@ -395,35 +395,35 @@
 }
 
 /* Red letter text */
-[data-type="bible-view"] span[style*="color: red"] {
+[data-type="bible-view-plus"] span[style*="color: red"] {
     color: var(--gospel-red) !important;
     font-weight: 500;
 }
 
 /* Premium API Paragraph and Poetry Formatting */
-[data-type="bible-view"] .chapter-content p {
+[data-type="bible-view-plus"] .chapter-content p {
     margin: 8px 0;
     line-height: 1.65;
     font-size: var(--font-normal);
 }
 
-[data-type="bible-view"] .chapter-content .poetry,
-[data-type="bible-view"] .chapter-content .q,
-[data-type="bible-view"] .chapter-content .q1,
-[data-type="bible-view"] .chapter-content .q2 {
+[data-type="bible-view-plus"] .chapter-content .poetry,
+[data-type="bible-view-plus"] .chapter-content .q,
+[data-type="bible-view-plus"] .chapter-content .q1,
+[data-type="bible-view-plus"] .chapter-content .q2 {
     margin: 4px 0 4px 16px;
     text-indent: -12px;
     line-height: 1.6;
 }
 
-[data-type="bible-view"] .chapter-content .block-indent,
-[data-type="bible-view"] .chapter-content .m {
+[data-type="bible-view-plus"] .chapter-content .block-indent,
+[data-type="bible-view-plus"] .chapter-content .m {
     margin: 6px 0 6px 24px;
     line-height: 1.6;
 }
 
-[data-type="bible-view"] .chapter-content .s1,
-[data-type="bible-view"] .chapter-content .s {
+[data-type="bible-view-plus"] .chapter-content .s1,
+[data-type="bible-view-plus"] .chapter-content .s {
     font-size: 1.1em;
     font-weight: 700;
     color: var(--text-normal);
@@ -458,7 +458,7 @@
     display: block;
 }
 
-[data-type="bible-view"] .verse:hover .bible-verse-copy-btn {
+[data-type="bible-view-plus"] .verse:hover .bible-verse-copy-btn {
     opacity: 1;
     transform: translateY(-50%) scale(1);
 }
@@ -720,13 +720,13 @@ body.bible-hide-link-icons a.external-link[href^="obsidian://bible"] svg {
 }
 
 /* Draggable Verses Grab Cursor */
-[data-type="bible-view"] .verse[draggable="true"] {
+[data-type="bible-view-plus"] .verse[draggable="true"] {
     cursor: grab;
     user-select: none;
     -webkit-user-select: none;
 }
 
-[data-type="bible-view"] .verse[draggable="true"]:active {
+[data-type="bible-view-plus"] .verse[draggable="true"]:active {
     cursor: grabbing;
 }
 
