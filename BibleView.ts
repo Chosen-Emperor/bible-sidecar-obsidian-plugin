@@ -282,7 +282,7 @@ export class BibleView extends ItemView {
 				const scrollMsg = `[Bible Sidecar Debug] Scrolling to first element in range`;
 				console.log(scrollMsg);
 				if (this.plugin?.writeLog) await this.plugin.writeLog(scrollMsg);
-				(firstScrollEl as any).scrollIntoView({ behavior: "smooth", block: "center" });
+				(firstScrollEl as any).scrollIntoView({ behavior: "auto", block: "center" });
 			} else {
 				const warnMsg = `[Bible Sidecar Debug] Warning: No scroll element identified for range ${start}-${end}`;
 				console.log(warnMsg);
@@ -940,12 +940,51 @@ export class BibleView extends ItemView {
 					const verseNum = verseNumText.trim();
 					const formattedVerseNumber = convertToSuperscript(verseNum);
 					
+					// Collect all siblings up to the next verse or chapter span
+					const siblingsToWrap: Node[] = [];
 					let next = span.nextSibling;
-					if (next && next.nodeType === Node.TEXT_NODE && next.textContent) {
-						next.textContent = next.textContent.replace(/^\s*\d+:\d+\s*/, "");
-					}
+					const verseClass = isEsv ? "verse-num" : "v";
 					
-					span.outerHTML = `<span class="verse-num">${formattedVerseNumber}</span>\u00A0`;
+					while (next && !(next instanceof Element && (
+						next.classList.contains(verseClass) || 
+						next.classList.contains("chapter-num") || 
+						(next.tagName.toLowerCase() === "b" && next.classList.contains("verse-num")) ||
+						(next.tagName.toLowerCase() === "span" && next.classList.contains("chapter-num"))
+					))) {
+						siblingsToWrap.push(next);
+						next = next.nextSibling;
+					}
+
+					// Create the wrapper span
+					const verseWrapper = document.createElement("span");
+					verseWrapper.className = "verse-inline";
+					verseWrapper.setAttribute("data-verse", verseNum);
+					
+					// Insert wrapper before current span
+					span.parentNode?.insertBefore(verseWrapper, span);
+					
+					// Append new verse-num element inside wrapper
+					const verseNumSpan = document.createElement("span");
+					verseNumSpan.className = "verse-num";
+					verseNumSpan.textContent = formattedVerseNumber;
+					verseWrapper.appendChild(verseNumSpan);
+					verseWrapper.appendChild(document.createTextNode("\u00A0"));
+					
+					// Strip redundant 1:1 prefix on first sibling text if present
+					if (siblingsToWrap.length > 0) {
+						const firstSib = siblingsToWrap[0];
+						if (firstSib.nodeType === Node.TEXT_NODE && firstSib.textContent) {
+							firstSib.textContent = firstSib.textContent.replace(/^\s*\d+:\d+\s*/, "");
+						}
+					}
+
+					// Move sibling nodes inside wrapper
+					siblingsToWrap.forEach(sibling => {
+						verseWrapper.appendChild(sibling);
+					});
+
+					// Remove original span
+					span.remove();
 				});
 				
 				chapterContent.innerHTML = inlineDiv.innerHTML;
