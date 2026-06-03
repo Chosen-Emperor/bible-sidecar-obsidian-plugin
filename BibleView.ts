@@ -1108,16 +1108,6 @@ export class BibleView extends ItemView {
 			}
 		});
 
-		// Highlight verse when clicked/touched inside sidecar
-		chapterContent.addEventListener("click", (e: MouseEvent) => {
-			const target = e.target as HTMLElement;
-			const verseEl = target.closest(".verse") || target.closest(".verse-inline") || target.closest(".verse-num");
-			if (verseEl) {
-				chapterContent.querySelectorAll(".active-verse").forEach(el => el.classList.remove("active-verse"));
-				verseEl.classList.add("active-verse");
-			}
-		});
-
 		// Bottom navigation controls row so user can change chapter when reaching the end of verses
 		const bottomControls = chapterContainer.createDiv({ cls: "bible-view-controls-bottom" });
 		

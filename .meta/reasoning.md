@@ -1,15 +1,10 @@
-# Reasoning - Settings API Connection Feedback
+# Reasoning - Click Highlighting Removal & Settings API Validation
 
-We added live validation and status feedback when users input and connect ESV API or API.Bible premium provider keys in the settings tab.
+This document tracks design reasoning for two major changes: the premium settings feedback and the removal of click-based sidecar verse highlights.
 
 ## Design Philosophies
-- **User Feedback & Responsiveness**: Previously, inputting API keys was silent, leaving the user guessing if their keys worked. Tying the "Connect" buttons to dynamic test requests and loading/error states provides immediate reassurance and clarity.
+- **Minimalist & Clean Layout**: Standardizing on automatic and snappier temporary highlights when navigating to a passage (for search and cross-referencing), rather than adding permanent active verse states upon simple sidecar click events, which could lead to unwanted visual clutter.
 
 ## Design Decisions
-- **Live Check via requestUrl**: When the user clicks "Connect", we perform a validation check immediately using Obsidian's `requestUrl` to hit a lightweight endpoint (e.g. fetching John 3:16 for ESV or list of Bibles for API.Bible).
-- **Description-Based Status**: Rather than adding complex UI nodes, we dynamically update the setting description field (`setDesc`) with status indicators like `⏳ Connecting...`, `✅ Connected successfully!`, and `❌ Connection failed: [Error]`, maintaining clean, native styling.
-- **Cache Invalidations**: Tying the states to `onChange` events ensures the connection status is reset when the key is edited, preventing false successes.
-
-## Testing
-- Automated: The existing test suite was run to ensure that no existing functionality is broken.
-- Manual: Verified validation by entering valid/invalid inputs in settings tabs.
+- **Removing chapterContent Click Listener**: Removed the click event listener that matched nearest `.verse`, `.verse-inline`, or `.verse-num` elements and applied `.active-verse`. This prevents permanent selection highlights during normal reading clicks.
+- **Dynamic Settings API Validation**: Retained the live checking of ESV and API.Bible keys via on-demand HTTP requests and updating setting description labels.
