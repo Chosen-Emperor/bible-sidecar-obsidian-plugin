@@ -5,6 +5,11 @@ import { App, PluginSettingTab, Setting, requestUrl, Notice } from "obsidian";
 export class BibleSidecarSettingsTab extends PluginSettingTab {
 	plugin: BibleSidecarPlugin;
 	containerEl: HTMLElement; // Add containerEl property
+	esvStatus: "none" | "validating" | "success" | "error" = "none";
+	esvError: string = "";
+	apiBibleStatus: "none" | "validating" | "success" | "error" = "none";
+	apiBibleError: string = "";
+
 	constructor(app: App, plugin: BibleSidecarPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
@@ -27,6 +32,16 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 		};
 		const { containerEl } = this;
 		containerEl.empty(); // Clear the container if it's not empty
+
+		if (this.plugin.apiBiblesCache && this.plugin.apiBiblesCache.length > 0) {
+			if (this.plugin.apiBiblesCache[0].id === "error") {
+				this.apiBibleStatus = "error";
+				this.apiBibleError = "Failed to load versions from API.Bible";
+			} else if (this.apiBibleStatus === "none") {
+				this.apiBibleStatus = "success";
+			}
+		}
+
 		new Setting(containerEl)
 			.setName("Bible language")
 			.setDesc("Choose your preferred Bible language")
@@ -398,23 +413,59 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 					});
 			});
 
+		let esvStatusText = "";
+		if (this.esvStatus === "validating") {
+			esvStatusText = "⏳ Connecting and validating key...";
+		} else if (this.esvStatus === "success") {
+			esvStatusText = "✅ Connected successfully!";
+		} else if (this.esvStatus === "error") {
+			esvStatusText = `❌ Connection failed: ${this.esvError || "Invalid API key"}`;
+		} else {
+			esvStatusText = "Your non-commercial API key from api.esv.org";
+		}
+
 		esvApiKeySetting = new Setting(premiumContent)
 			.setName("ESV API Key")
-			.setDesc("Your non-commercial API key from api.esv.org")
+			.setDesc(esvStatusText)
 			.addText((text) => {
 				text
 					.setPlaceholder("Enter your ESV API key")
 					.setValue(this.plugin.settings.esvApiKey)
 					.onChange((value) => {
 						this.plugin.settings.esvApiKey = value;
+						this.esvStatus = "none";
 						this.plugin.saveSettings();
 					});
 			})
 			.addButton((btn) => {
 				btn.setButtonText("Connect")
 					.setCta()
-					.onClick(() => {
-						this.display(); // Re-render setting display
+					.onClick(async () => {
+						if (!this.plugin.settings.esvApiKey.trim()) {
+							this.esvStatus = "error";
+							this.esvError = "API key cannot be empty";
+							this.display();
+							return;
+						}
+						this.esvStatus = "validating";
+						this.display();
+						try {
+							const res = await requestUrl({
+								url: "https://api.esv.org/v3/passage/html/?q=John+3:16",
+								headers: { "Authorization": `Token ${this.plugin.settings.esvApiKey.trim()}` }
+							});
+							if (res.status === 200) {
+								this.esvStatus = "success";
+								new Notice("ESV API Connected successfully!");
+							} else {
+								this.esvStatus = "error";
+								this.esvError = `Status code ${res.status}`;
+							}
+						} catch (err) {
+							this.esvStatus = "error";
+							this.esvError = err.message || String(err);
+						}
+						this.display();
 					});
 			});
 
@@ -444,9 +495,20 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 					});
 			});
 
+		let apiBibleStatusText = "";
+		if (this.apiBibleStatus === "validating") {
+			apiBibleStatusText = "⏳ Connecting and validating key...";
+		} else if (this.apiBibleStatus === "success") {
+			apiBibleStatusText = "✅ Connected successfully!";
+		} else if (this.apiBibleStatus === "error") {
+			apiBibleStatusText = `❌ Connection failed: ${this.apiBibleError || "Invalid API key"}`;
+		} else {
+			apiBibleStatusText = "Your non-commercial API key from scripture.api.bible";
+		}
+
 		apiKeySetting = new Setting(premiumContent)
 			.setName("API.Bible Key")
-			.setDesc("Your non-commercial API key from scripture.api.bible")
+			.setDesc(apiBibleStatusText)
 			.addText((text) => {
 				text
 					.setPlaceholder("Enter your API key")
@@ -454,15 +516,46 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 					.onChange((value) => {
 						this.plugin.settings.apiBibleKey = value;
 						this.plugin.apiBiblesCache = null; // Clear cache on key change
+						this.apiBibleStatus = "none";
 						this.plugin.saveSettings();
 					});
 			})
 			.addButton((btn) => {
 				btn.setButtonText("Connect")
 					.setCta()
-					.onClick(() => {
+					.onClick(async () => {
+						if (!this.plugin.settings.apiBibleKey.trim()) {
+							this.apiBibleStatus = "error";
+							this.apiBibleError = "API key cannot be empty";
+							this.display();
+							return;
+						}
+						this.apiBibleStatus = "validating";
 						this.plugin.apiBiblesCache = null; // Clear cache to force reload
 						this.display(); // Re-render to trigger fetch
+						try {
+							const res = await requestUrl({
+								url: "https://api.scripture.api.bible/v1/bibles",
+								headers: { "api-key": this.plugin.settings.apiBibleKey.trim() }
+							});
+							if (res.status === 200 && res.json?.data) {
+								this.apiBibleStatus = "success";
+								this.plugin.apiBiblesCache = res.json.data.map((b: any) => ({
+									id: b.id,
+									name: `${b.name} (${b.abbreviation})`
+								}));
+								new Notice("API.Bible Connected successfully!");
+							} else {
+								this.apiBibleStatus = "error";
+								this.apiBibleError = `Status code ${res.status}`;
+								this.plugin.apiBiblesCache = [{ id: "error", name: "Error loading translations" }];
+							}
+						} catch (err) {
+							this.apiBibleStatus = "error";
+							this.apiBibleError = err.message || String(err);
+							this.plugin.apiBiblesCache = [{ id: "error", name: "Error loading translations" }];
+						}
+						this.display();
 					});
 			});
 
@@ -470,22 +563,28 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 		const hasKey = this.plugin.settings.apiBibleKey.trim().length > 0;
 		if (this.plugin.settings.apiBibleEnabled && hasKey && !this.plugin.apiBiblesCache) {
 			this.plugin.apiBiblesCache = []; // Set to empty to avoid duplicate concurrent fetches
+			this.apiBibleStatus = "validating";
 			requestUrl({
 				url: "https://api.scripture.api.bible/v1/bibles",
 				headers: { "api-key": this.plugin.settings.apiBibleKey.trim() }
 			}).then((res: any) => {
 				if (res.status === 200 && res.json?.data) {
+					this.apiBibleStatus = "success";
 					this.plugin.apiBiblesCache = res.json.data.map((b: any) => ({
 						id: b.id,
 						name: `${b.name} (${b.abbreviation})`
 					}));
 					this.display(); // Re-render to populate dropdown!
 				} else {
+					this.apiBibleStatus = "error";
+					this.apiBibleError = "Invalid API response";
 					this.plugin.apiBiblesCache = [{ id: "error", name: "Error loading translations" }];
 					this.display();
 				}
 			}).catch((err: any) => {
 				console.error("Error fetching API.Bible list:", err);
+				this.apiBibleStatus = "error";
+				this.apiBibleError = err.message || String(err);
 				this.plugin.apiBiblesCache = [{ id: "error", name: "Error loading translations" }];
 				this.display();
 			});
