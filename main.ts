@@ -473,7 +473,17 @@ export default class BibleSidecarPlugin extends Plugin {
 					const endVerse = match[4]; // This captures the end of the range if it exists
 					
 					const rangeStr = endVerse ? `${startVerse}-${endVerse}` : startVerse;
-					const uri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${chapter}&verse=${startVerse}${endVerse ? `&endVerse=${endVerse}` : ""}`;
+					let verseVal = startVerse;
+					if (endVerse && !isNaN(parseInt(startVerse)) && !isNaN(parseInt(endVerse))) {
+						const start = parseInt(startVerse);
+						const end = parseInt(endVerse);
+						const vList = [];
+						for (let v = start; v <= end; v++) {
+							vList.push(v);
+						}
+						verseVal = vList.join(",");
+					}
+					const uri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${chapter}&verse=${verseVal}`;
 					
 					let referenceText = "";
 					if (this.settings.verseReferenceInternalLinking) {
@@ -492,7 +502,17 @@ export default class BibleSidecarPlugin extends Plugin {
 					const startVerse = verseMatch[1];
 					const endVerse = verseMatch[2];
 					const rangeStr = endVerse ? startVerse + "-" + endVerse : startVerse;
-					const uri = "obsidian://bible?book=" + encodeURIComponent(context.book) + "&chapter=" + context.chapter + "&verse=" + startVerse + (endVerse ? "&endVerse=" + endVerse : "");
+					let verseVal = startVerse;
+					if (endVerse && !isNaN(parseInt(startVerse)) && !isNaN(parseInt(endVerse))) {
+						const start = parseInt(startVerse);
+						const end = parseInt(endVerse);
+						const vList = [];
+						for (let v = start; v <= end; v++) {
+							vList.push(v);
+						}
+						verseVal = vList.join(",");
+					}
+					const uri = "obsidian://bible?book=" + encodeURIComponent(context.book) + "&chapter=" + context.chapter + "&verse=" + verseVal;
 					const displayVerse = selection.startsWith("V") ? "V" + rangeStr : "v" + rangeStr;
 					const referenceText = "[" + displayVerse + "](" + uri + ")";
 					editor.replaceSelection(referenceText);
@@ -558,7 +578,8 @@ export default class BibleSidecarPlugin extends Plugin {
 									if (vNum >= startVerse && vNum <= endVerse) {
 										const cleanText = verse.text.replace(/<[^>]*>?/gm, '').replace(/^\d+:\d+\s*/, "").trim();
 										const supText = convertToSuperscript(verse.verse);
-										versesList.push(`${supText} ${cleanText}`);
+										const vUri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${chapter}&verse=${vNum}`;
+										versesList.push(`[${supText}](${vUri}) ${cleanText}`);
 									}
 								}
 								fetchSuccess = true;
@@ -576,7 +597,8 @@ export default class BibleSidecarPlugin extends Plugin {
 								if (vNum >= startVerse && vNum <= endVerse) {
 									const cleanText = verse.text.replace(/<[^>]*>?/gm, '').replace(/^\d+:\d+\s*/, "").trim();
 									const supText = convertToSuperscript(verse.verse);
-									versesList.push(`${supText} ${cleanText}`);
+									const vUri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${chapter}&verse=${vNum}`;
+									versesList.push(`[${supText}](${vUri}) ${cleanText}`);
 								}
 							}
 							fetchSuccess = true;
@@ -586,7 +608,12 @@ export default class BibleSidecarPlugin extends Plugin {
 					if (versesList.length > 0) {
 						const scriptureText = versesList.join(" ");
 						const rangeStr = startVerse === endVerse ? startVerse.toString() : `${startVerse}-${endVerse}`;
-						const uri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${chapter}&verse=${startVerse}${startVerse !== endVerse ? `&endVerse=${endVerse}` : ""}`;
+						const vList = [];
+						for (let v = startVerse; v <= endVerse; v++) {
+							vList.push(v);
+						}
+						const verseVal = vList.join(",");
+						const uri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${chapter}&verse=${verseVal}`;
 						let referenceLink = "";
 						if (this.settings.verseReferenceInternalLinking) {
 							referenceLink = `[[${book}]] [${chapter}:${rangeStr}](${uri})`;
@@ -655,7 +682,15 @@ export default class BibleSidecarPlugin extends Plugin {
 						? (startVerse === endVerse ? startVerse.toString() : `${startVerse}-${endVerse}`)
 						: `${startChapter}:${startVerse}-${endChapter}:${endVerse}`;
 					
-					const uri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${startChapter}&verse=${startVerse}${startChapter === endChapter && startVerse !== endVerse ? `&endVerse=${endVerse}` : ""}`;
+					let verseVal = startVerse.toString();
+					if (startChapter === endChapter && startVerse !== endVerse) {
+						const vList = [];
+						for (let v = startVerse; v <= endVerse; v++) {
+							vList.push(v);
+						}
+						verseVal = vList.join(",");
+					}
+					const uri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${startChapter}&verse=${verseVal}`;
 					
 					let referenceText = "";
 					if (this.settings.verseReferenceInternalLinking) {
@@ -698,7 +733,15 @@ export default class BibleSidecarPlugin extends Plugin {
 					let endVerse = verseMatch[2] ? parseInt(verseMatch[2]) : startVerse;
 					const flag = verseMatch[3] ? verseMatch[3].toLowerCase() : null;
 					const rangeStr = startVerse === endVerse ? startVerse.toString() : startVerse + "-" + endVerse;
-					const uri = "obsidian://bible?book=" + encodeURIComponent(book) + "&chapter=" + startChapter + "&verse=" + startVerse + (startVerse !== endVerse ? "&endVerse=" + endVerse : "");
+					let verseVal = startVerse.toString();
+					if (startVerse !== endVerse) {
+						const vList = [];
+						for (let v = startVerse; v <= endVerse; v++) {
+							vList.push(v);
+						}
+						verseVal = vList.join(",");
+					}
+					const uri = "obsidian://bible?book=" + encodeURIComponent(book) + "&chapter=" + startChapter + "&verse=" + verseVal;
 					const displayVerse = fullMatch.includes("--V") ? "V" + rangeStr : "v" + rangeStr;
 					const referenceText = "[" + displayVerse + "](" + uri + ")";
 					const startCh = cursor.ch - fullMatch.length;

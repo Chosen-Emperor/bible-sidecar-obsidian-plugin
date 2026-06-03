@@ -905,6 +905,7 @@ export class BibleView extends ItemView {
 
 					formattedVerse.addEventListener("dragstart", (e) => {
 						const uri = `obsidian://bible?book=${encodeURIComponent(book.name)}&chapter=${i}&verse=${verseNum}`;
+						const linkedVerseNum = `[${formattedVerseNumber}](${uri})`;
 						let referenceLink = "";
 						if (this.settings.verseReferenceInternalLinking) {
 							referenceLink = `[[${book.name}]] [${i}:${verseNum}](${uri})`;
@@ -917,12 +918,12 @@ export class BibleView extends ItemView {
 
 						let dragText = "";
 						if (this.settings.copyFormat === "callout") {
-							dragText = `> [!quote] ${referenceLink}\n> ${formattedVerseNumber} ${cleanText}`;
+							dragText = `> [!quote] ${referenceLink}\n> ${linkedVerseNum} ${cleanText}`;
 						} else {
 							if (this.settings.copyVerseReference) {
-								dragText = `${formattedVerseNumber} ${cleanText}\n${this.settings.verseReferenceStyle}${referenceLink}`;
+								dragText = `${linkedVerseNum} ${cleanText}\n${this.settings.verseReferenceStyle}${referenceLink}`;
 							} else {
-								dragText = `${formattedVerseNumber} ${cleanText}`;
+								dragText = `${linkedVerseNum} ${cleanText}`;
 							}
 						}
 						if (e.dataTransfer) {
@@ -1043,6 +1044,7 @@ export class BibleView extends ItemView {
 
 					formattedVerse.addEventListener("dragstart", (e) => {
 						const uri = `obsidian://bible?book=${encodeURIComponent(book.name)}&chapter=${i}&verse=${verse.verse}`;
+						const linkedVerseNum = `[${formattedVerseNumber}](${uri})`;
 						let referenceLink = "";
 						if (this.settings.verseReferenceInternalLinking) {
 							referenceLink = `[[${book.name}]] [${i}:${verse.verse}](${uri})`;
@@ -1055,12 +1057,12 @@ export class BibleView extends ItemView {
 
 						let dragText = "";
 						if (this.settings.copyFormat === "callout") {
-							dragText = `> [!quote] ${referenceLink}\n> ${formattedVerseNumber} ${cleanText}`;
+							dragText = `> [!quote] ${referenceLink}\n> ${linkedVerseNum} ${cleanText}`;
 						} else {
 							if (this.settings.copyVerseReference) {
-								dragText = `${formattedVerseNumber} ${cleanText}\n${this.settings.verseReferenceStyle}${referenceLink}`;
+								dragText = `${linkedVerseNum} ${cleanText}\n${this.settings.verseReferenceStyle}${referenceLink}`;
 							} else {
-								dragText = `${formattedVerseNumber} ${cleanText}`;
+								dragText = `${linkedVerseNum} ${cleanText}`;
 							}
 						}
 						if (e.dataTransfer) {
