@@ -197,22 +197,30 @@ export class BibleView extends ItemView {
 	}
 	
 	public async navigateToPassage(bookName: string, chapterNumber: number, verseNumber: number, endVerseNumber?: number) {
-		console.log(`[Bible Sidecar Debug] navigateToPassage called: bookName=${bookName}, chapterNumber=${chapterNumber}, verseNumber=${verseNumber}, endVerseNumber=${endVerseNumber}`);
+		const logMsg = `[Bible Sidecar Debug] navigateToPassage called: bookName=${bookName}, chapterNumber=${chapterNumber}, verseNumber=${verseNumber}, endVerseNumber=${endVerseNumber}`;
+		console.log(logMsg);
 		if (this.plugin?.writeLog) {
-			await this.plugin.writeLog(`Navigating to passage: ${bookName} ${chapterNumber}:${verseNumber}${endVerseNumber ? `-${endVerseNumber}` : ""}`);
+			await this.plugin.writeLog(logMsg);
 		}
 		const books = await this.generateBibleBooks(this.settings.bibleVersion);
 		const targetBook = books.find((b: any) => b.name.toLowerCase() === bookName.toLowerCase());
 		if (!targetBook) {
-			console.log(`[Bible Sidecar Debug] Book not found: ${bookName}`);
+			const errMsg = `[Bible Sidecar Debug] Book not found: ${bookName}`;
+			console.log(errMsg);
+			if (this.plugin?.writeLog) await this.plugin.writeLog(errMsg);
 			return;
 		}
 
-		console.log(`[Bible Sidecar Debug] Found target book:`, targetBook);
+		const foundMsg = `[Bible Sidecar Debug] Found target book: ${targetBook.name}`;
+		console.log(foundMsg);
+		if (this.plugin?.writeLog) await this.plugin.writeLog(foundMsg);
+		
 		const chapterContentArray = await this.getChapterContent(this.settings.bibleVersion, targetBook.bookid, chapterNumber);
 		const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
 		if (!container) {
-			console.log(`[Bible Sidecar Debug] Error: .chapter-container not found in DOM`);
+			const errMsg = `[Bible Sidecar Debug] Error: .chapter-container not found in DOM`;
+			console.log(errMsg);
+			if (this.plugin?.writeLog) await this.plugin.writeLog(errMsg);
 			return;
 		}
 
@@ -220,8 +228,11 @@ export class BibleView extends ItemView {
 		this.processChapterContent(chapterContentArray, container, targetBook, chapterNumber, books);
 
 		// Scroll to the specific verse and highlight range
-		setTimeout(() => {
-			console.log(`[Bible Sidecar Debug] Scroll/highlight timeout executing. Start verse: ${verseNumber}, End verse: ${endVerseNumber || verseNumber}`);
+		setTimeout(async () => {
+			const timeMsg = `[Bible Sidecar Debug] Scroll/highlight timeout executing. Start verse: ${verseNumber}, End verse: ${endVerseNumber || verseNumber}`;
+			console.log(timeMsg);
+			if (this.plugin?.writeLog) await this.plugin.writeLog(timeMsg);
+			
 			const start = verseNumber;
 			const end = endVerseNumber || start;
 			let firstScrollEl: HTMLElement | null = null;
@@ -230,25 +241,30 @@ export class BibleView extends ItemView {
 			container.querySelectorAll(".active-verse").forEach(el => el.classList.remove("active-verse"));
 
 			const elements = container.querySelectorAll(".verse-num");
-			console.log(`[Bible Sidecar Debug] Found ${elements.length} elements with '.verse-num' class`);
+			const countMsg = `[Bible Sidecar Debug] Found ${elements.length} elements with '.verse-num' class`;
+			console.log(countMsg);
+			if (this.plugin?.writeLog) await this.plugin.writeLog(countMsg);
 
 			for (let v = start; v <= end; v++) {
 				const targetSuperscript = convertToSuperscript(v.toString());
-				console.log(`[Bible Sidecar Debug] Matching verse ${v} using superscript '${targetSuperscript}'`);
+				const checkingMsg = `[Bible Sidecar Debug] Matching verse ${v} using superscript '${targetSuperscript}'`;
+				console.log(checkingMsg);
+				if (this.plugin?.writeLog) await this.plugin.writeLog(checkingMsg);
 				let matchedForV = false;
 				
 				elements.forEach((el: HTMLElement) => {
 					const textVal = (el.textContent || "").trim();
 					if (textVal === targetSuperscript) {
 						matchedForV = true;
-						console.log(`[Bible Sidecar Debug] Success: Match found for verse ${v} on element:`, el);
+						const matchMsg = `[Bible Sidecar Debug] Success: Match found for verse ${v} on element text: '${textVal}'`;
+						console.log(matchMsg);
+						if (this.plugin?.writeLog) this.plugin.writeLog(matchMsg).catch(() => {});
+						
 						const parentVerse = el.closest(".verse") || el.closest(".verse-inline");
 						if (parentVerse) {
-							console.log(`[Bible Sidecar Debug] Adding .active-verse to parent container:`, parentVerse);
 							parentVerse.classList.add("active-verse");
 							if (!firstScrollEl) firstScrollEl = parentVerse as HTMLElement;
 						} else {
-							console.log(`[Bible Sidecar Debug] Adding .active-verse to .verse-num directly:`, el);
 							el.classList.add("active-verse");
 							if (!firstScrollEl) firstScrollEl = el;
 						}
@@ -256,15 +272,21 @@ export class BibleView extends ItemView {
 				});
 
 				if (!matchedForV) {
-					console.log(`[Bible Sidecar Debug] Warning: Failed to find element matching '${targetSuperscript}' for verse ${v}`);
+					const warnMsg = `[Bible Sidecar Debug] Warning: Failed to find element matching '${targetSuperscript}' for verse ${v}`;
+					console.log(warnMsg);
+					if (this.plugin?.writeLog) await this.plugin.writeLog(warnMsg);
 				}
 			}
 
 			if (firstScrollEl) {
-				console.log(`[Bible Sidecar Debug] Scrolling to first element:`, firstScrollEl);
+				const scrollMsg = `[Bible Sidecar Debug] Scrolling to first element in range`;
+				console.log(scrollMsg);
+				if (this.plugin?.writeLog) await this.plugin.writeLog(scrollMsg);
 				(firstScrollEl as any).scrollIntoView({ behavior: "smooth", block: "center" });
 			} else {
-				console.log(`[Bible Sidecar Debug] Warning: No scroll element identified for range ${start}-${end}`);
+				const warnMsg = `[Bible Sidecar Debug] Warning: No scroll element identified for range ${start}-${end}`;
+				console.log(warnMsg);
+				if (this.plugin?.writeLog) await this.plugin.writeLog(warnMsg);
 			}
 		}, 150);
 	}
