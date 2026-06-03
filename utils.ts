@@ -127,7 +127,7 @@ export function compileCopyMessage(
 		}
 
 		const rangeStr = run.start === run.end ? run.start.toString() : `${run.start}-${run.end}`;
-		const uri = `obsidian://bible?book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${run.start}`;
+		const uri = `obsidian://bible?book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${run.start}${run.start !== run.end ? `&endVerse=${run.end}` : ""}`;
 		
 		let referenceLink = "";
 		if (settings.verseReferenceInternalLinking) {
@@ -147,7 +147,7 @@ export function compileCopyMessage(
 	let finalText = formattedRuns.join("\n\n");
 
 	if (settings.copyFormat === "callout") {
-		const uri = `obsidian://bible?book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${firstVerse}`;
+		const uri = `obsidian://bible?book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${firstVerse}${firstVerse !== lastVerse ? `&endVerse=${lastVerse}` : ""}`;
 		
 		let referenceLink = "";
 		if (settings.verseReferenceInternalLinking) {

@@ -357,15 +357,15 @@
     background-color: var(--sidecar-hover-bg);
 }
 
-/* Highly Visible Highlights for Active Verses */
+/* Highly Visible Highlights for Active Verses (Shorter Duration) */
 @keyframes activeVerseHighlight {
     0% {
-        background-color: rgba(var(--interactive-accent-rgb, 255, 179, 0), 0.35);
-        box-shadow: 0 0 12px 3px rgba(var(--interactive-accent-rgb, 255, 179, 0), 0.25);
+        background-color: rgba(255, 179, 0, 0.4);
+        box-shadow: 0 0 10px 2px rgba(255, 179, 0, 0.3);
     }
-    65% {
-        background-color: rgba(var(--interactive-accent-rgb, 255, 179, 0), 0.30);
-        box-shadow: 0 0 12px 3px rgba(var(--interactive-accent-rgb, 255, 179, 0), 0.20);
+    60% {
+        background-color: rgba(255, 179, 0, 0.35);
+        box-shadow: 0 0 8px 2px rgba(255, 179, 0, 0.25);
     }
     100% {
         background-color: transparent;
@@ -376,21 +376,22 @@
 [data-type="bible-view-plus"] .verse.active-verse {
     border-left: 3px solid var(--interactive-accent);
     border-radius: 0 var(--sidecar-radius) var(--sidecar-radius) 0;
-    animation: activeVerseHighlight 3.5s cubic-bezier(0.25, 1, 0.5, 1) 1;
+    animation: activeVerseHighlight 0.8s cubic-bezier(0.25, 1, 0.5, 1) 1;
     animation-fill-mode: forwards;
 }
 
 [data-type="bible-view-plus"] .verse-inline.active-verse {
     border-bottom: 2px solid var(--interactive-accent);
-    animation: activeVerseHighlight 3.5s cubic-bezier(0.25, 1, 0.5, 1) 1;
+    background-color: rgba(255, 179, 0, 0.2);
+    animation: activeVerseHighlight 0.8s cubic-bezier(0.25, 1, 0.5, 1) 1;
     animation-fill-mode: forwards;
 }
 
 [data-type="bible-view-plus"] .verse-num.active-verse {
-    background-color: rgba(var(--interactive-accent-rgb, 255, 179, 0), 0.35);
+    background-color: rgba(255, 179, 0, 0.4);
     border-radius: 3px;
     padding: 0 4px;
-    animation: activeVerseHighlight 3.5s cubic-bezier(0.25, 1, 0.5, 1) 1;
+    animation: activeVerseHighlight 0.8s cubic-bezier(0.25, 1, 0.5, 1) 1;
     animation-fill-mode: forwards;
 }
 

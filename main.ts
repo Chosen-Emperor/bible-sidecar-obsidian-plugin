@@ -473,7 +473,7 @@ export default class BibleSidecarPlugin extends Plugin {
 					const endVerse = match[4]; // This captures the end of the range if it exists
 					
 					const rangeStr = endVerse ? `${startVerse}-${endVerse}` : startVerse;
-					const uri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${chapter}&verse=${startVerse}`;
+					const uri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${chapter}&verse=${startVerse}${endVerse ? `&endVerse=${endVerse}` : ""}`;
 					
 					let referenceText = "";
 					if (this.settings.verseReferenceInternalLinking) {
@@ -492,7 +492,7 @@ export default class BibleSidecarPlugin extends Plugin {
 					const startVerse = verseMatch[1];
 					const endVerse = verseMatch[2];
 					const rangeStr = endVerse ? startVerse + "-" + endVerse : startVerse;
-					const uri = "obsidian://bible?book=" + encodeURIComponent(context.book) + "&chapter=" + context.chapter + "&verse=" + startVerse;
+					const uri = "obsidian://bible?book=" + encodeURIComponent(context.book) + "&chapter=" + context.chapter + "&verse=" + startVerse + (endVerse ? "&endVerse=" + endVerse : "");
 					const displayVerse = selection.startsWith("V") ? "V" + rangeStr : "v" + rangeStr;
 					const referenceText = "[" + displayVerse + "](" + uri + ")";
 					editor.replaceSelection(referenceText);
@@ -586,7 +586,7 @@ export default class BibleSidecarPlugin extends Plugin {
 					if (versesList.length > 0) {
 						const scriptureText = versesList.join(" ");
 						const rangeStr = startVerse === endVerse ? startVerse.toString() : `${startVerse}-${endVerse}`;
-						const uri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${chapter}&verse=${startVerse}`;
+						const uri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${chapter}&verse=${startVerse}${startVerse !== endVerse ? `&endVerse=${endVerse}` : ""}`;
 						let referenceLink = "";
 						if (this.settings.verseReferenceInternalLinking) {
 							referenceLink = `[[${book}]] [${chapter}:${rangeStr}](${uri})`;
@@ -655,7 +655,7 @@ export default class BibleSidecarPlugin extends Plugin {
 						? (startVerse === endVerse ? startVerse.toString() : `${startVerse}-${endVerse}`)
 						: `${startChapter}:${startVerse}-${endChapter}:${endVerse}`;
 					
-					const uri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${startChapter}&verse=${startVerse}`;
+					const uri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${startChapter}&verse=${startVerse}${startChapter === endChapter && startVerse !== endVerse ? `&endVerse=${endVerse}` : ""}`;
 					
 					let referenceText = "";
 					if (this.settings.verseReferenceInternalLinking) {
@@ -698,7 +698,7 @@ export default class BibleSidecarPlugin extends Plugin {
 					let endVerse = verseMatch[2] ? parseInt(verseMatch[2]) : startVerse;
 					const flag = verseMatch[3] ? verseMatch[3].toLowerCase() : null;
 					const rangeStr = startVerse === endVerse ? startVerse.toString() : startVerse + "-" + endVerse;
-					const uri = "obsidian://bible?book=" + encodeURIComponent(book) + "&chapter=" + startChapter + "&verse=" + startVerse;
+					const uri = "obsidian://bible?book=" + encodeURIComponent(book) + "&chapter=" + startChapter + "&verse=" + startVerse + (startVerse !== endVerse ? "&endVerse=" + endVerse : "");
 					const displayVerse = fullMatch.includes("--V") ? "V" + rangeStr : "v" + rangeStr;
 					const referenceText = "[" + displayVerse + "](" + uri + ")";
 					const startCh = cursor.ch - fullMatch.length;
@@ -729,7 +729,13 @@ export default class BibleSidecarPlugin extends Plugin {
 			if (leaf) {
 				this.app.workspace.revealLeaf(leaf);
 				if (this.view && typeof (this.view as any).navigateToPassage === "function") {
-					await (this.view as any).navigateToPassage(params.book, parseInt(params.chapter), parseInt(params.verse));
+					const endVerse = params.endVerse || params.endverse;
+					await (this.view as any).navigateToPassage(
+						params.book,
+						parseInt(params.chapter),
+						parseInt(params.verse),
+						endVerse ? parseInt(endVerse) : undefined
+					);
 				}
 			}
 		});

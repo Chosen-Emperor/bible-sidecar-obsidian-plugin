@@ -196,9 +196,9 @@ export class BibleView extends ItemView {
 		this.loadBible();
 	}
 	
-	public async navigateToPassage(bookName: string, chapterNumber: number, verseNumber: number) {
+	public async navigateToPassage(bookName: string, chapterNumber: number, verseNumber: number, endVerseNumber?: number) {
 		if (this.plugin?.writeLog) {
-			await this.plugin.writeLog(`Navigating to passage: ${bookName} ${chapterNumber}:${verseNumber}`);
+			await this.plugin.writeLog(`Navigating to passage: ${bookName} ${chapterNumber}:${verseNumber}${endVerseNumber ? `-${endVerseNumber}` : ""}`);
 		}
 		const books = await this.generateBibleBooks(this.settings.bibleVersion);
 		const targetBook = books.find((b: any) => b.name.toLowerCase() === bookName.toLowerCase());
@@ -211,28 +211,35 @@ export class BibleView extends ItemView {
 		container.empty();
 		this.processChapterContent(chapterContentArray, container, targetBook, chapterNumber, books);
 
-		// Scroll to the specific verse
+		// Scroll to the specific verse and highlight range
 		setTimeout(() => {
-			const targetSuperscript = convertToSuperscript(verseNumber.toString());
-			
-			const elements = container.querySelectorAll(".verse-num");
-			elements.forEach((el: HTMLElement) => {
-				if ((el.textContent || "").trim() === targetSuperscript) {
-					el.scrollIntoView({ behavior: "smooth", block: "center" });
-					
-					const parentVerse = el.closest(".verse");
-					if (parentVerse) {
-						parentVerse.classList.add("active-verse");
-					} else {
-						const parentInline = el.closest(".verse-inline");
-						if (parentInline) {
-							parentInline.classList.add("active-verse");
+			const start = verseNumber;
+			const end = endVerseNumber || start;
+			let firstScrollEl: HTMLElement | null = null;
+
+			// Clear any existing active verse highlighting
+			container.querySelectorAll(".active-verse").forEach(el => el.classList.remove("active-verse"));
+
+			for (let v = start; v <= end; v++) {
+				const targetSuperscript = convertToSuperscript(v.toString());
+				const elements = container.querySelectorAll(".verse-num");
+				elements.forEach((el: HTMLElement) => {
+					if ((el.textContent || "").trim() === targetSuperscript) {
+						const parentVerse = el.closest(".verse") || el.closest(".verse-inline");
+						if (parentVerse) {
+							parentVerse.classList.add("active-verse");
+							if (!firstScrollEl) firstScrollEl = parentVerse as HTMLElement;
 						} else {
 							el.classList.add("active-verse");
+							if (!firstScrollEl) firstScrollEl = el;
 						}
 					}
-				}
-			});
+				});
+			}
+
+			if (firstScrollEl) {
+				(firstScrollEl as any).scrollIntoView({ behavior: "smooth", block: "center" });
+			}
 		}, 150);
 	}
 	
