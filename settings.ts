@@ -366,7 +366,7 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Enable developer logging")
-			.setDesc("Creates a bible-sidecar-debug.log file inside the plugin folder to help diagnose HTML parsing issues.")
+			.setDesc("Creates a bible-sidecar-plus-debug.log file inside the plugin folder to help diagnose HTML parsing issues.")
 			.addToggle((toggle) => {
 				toggle
 					.setValue(this.plugin.settings.enableLogging)

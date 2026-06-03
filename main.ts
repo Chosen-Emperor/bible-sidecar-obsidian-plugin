@@ -408,7 +408,7 @@ export default class BibleSidecarPlugin extends Plugin {
 	async writeLog(message: string) {
 		if (!this.settings.enableLogging) return;
 		try {
-			const logPath = `${this.manifest.dir}/bible-sidecar-debug.log`;
+			const logPath = `${this.manifest.dir}/bible-sidecar-plus-debug.log`;
 			const timestamp = new Date().toISOString();
 			const formattedMessage = `[${timestamp}] ${message}\n`;
 			
@@ -419,7 +419,7 @@ export default class BibleSidecarPlugin extends Plugin {
 				await this.app.vault.adapter.append(logPath, formattedMessage);
 			}
 		} catch (err) {
-			console.error("Failed to write to bible-sidecar-debug.log:", err);
+			console.error("Failed to write to bible-sidecar-plus-debug.log:", err);
 		}
 	}
 

@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf, requestUrl, Notice, Platform, setIcon } from "obsidian";
 import { convertToSuperscript, convertToNumber, compileCopyMessage, copyToClipboard } from "./utils";
 
-export const BibleViewType = "bible-view";
+export const BibleViewType = "bible-view-plus";
 
 interface BibleSidecarSettings {
 	bibleVersion: string;

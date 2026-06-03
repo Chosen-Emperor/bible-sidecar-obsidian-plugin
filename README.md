@@ -1,6 +1,6 @@
-# 📖 Bible Sidecar for Obsidian
+# 📖 Bible Sidecar Plus for Obsidian
 
-A premium, feature-rich Bible reader and integration panel for Obsidian. Open your preferred translation in a split-screen view, search scripture offline, auto-expand scripture references as you type, and copy verses directly into your notes with customizable formats.
+A premium, feature-rich Bible reader and integration panel for Obsidian. This is an enhanced fork of the original [Bible Sidecar](https://github.com/janisringli/bible-sidecar-obsidian-plugin) plugin by Janis Ringli, developed to support offline databases, full-text offline search, and touch-friendly mobile layouts. Refined with the assistance of advanced AI.
 
 Designed to feel responsive, fast, and native across both Desktop and Mobile (iPad/iOS/Android).
 
@@ -80,4 +80,6 @@ Contributions are welcome! If you find a bug, have a feature suggestion, or want
 ---
 
 > [!NOTE]
-> Originally developed by [Janis Ringli](https://github.com/janisringli). If you appreciate this plugin, consider [buying him a coffee](https://buymeacoffee.com/janisringli).
+> **Credits & Authorship**
+> - Originally created and developed by [Janis Ringli](https://github.com/janisringli). (If you appreciate the core plugin, consider [buying him a coffee](https://buymeacoffee.com/janisringli)!)
+> - Enhanced and maintained by [Chosen-Emperor](https://github.com/Chosen-Emperor) with mobile compatibility, offline features, and layout polishing, developed in collaboration with AI assistance.
