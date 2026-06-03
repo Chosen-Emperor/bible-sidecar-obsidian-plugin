@@ -820,6 +820,26 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 		addModeSettings("+l (Newline Style)", "autoExpandReferenceStyle_l", "autoExpandScriptureStyle_l", "autoExpandCallout_l", "autoExpandCalloutType_l", "autoExpandCalloutTitle_l");
 		addModeSettings("+q (Scripture Only)", "autoExpandReferenceStyle_q", "autoExpandScriptureStyle_q", "autoExpandCallout_q", "autoExpandCalloutType_q", "autoExpandCalloutTitle_q");
 
+		new Setting(containerEl)
+			.setName("Offline download indicator accents")
+			.setDesc("Highlight cached books and chapters with visual accents (progress bars and glowing borders)")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.enableOfflineAccents)
+					.onChange(async (value) => {
+						this.plugin.settings.enableOfflineAccents = value;
+						await this.plugin.saveSettings();
+						
+						// Trigger active view update to reflect changes immediately
+						const activeViews = this.app.workspace.getLeavesOfType("bible-view-plus");
+						for (const leaf of activeViews) {
+							if (leaf.view && (leaf.view as any).updateSettings) {
+								(leaf.view as any).updateSettings(this.plugin.settings);
+							}
+						}
+					});
+			});
+
 		containerEl.createEl("hr", { cls: "bible-settings-divider" });
 
 		new Setting(containerEl)

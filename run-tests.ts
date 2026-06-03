@@ -438,6 +438,81 @@ function runTestSuite() {
     const expectedEsv = "³⁶ For of him...\n**[Chapter 12]**\n¹ I appeal to you...";
     assert(esvResult === expectedEsv, "ESV simulated parser correctly processes cross-chapter boundaries and outputs inline chapter transition markers");
     console.log();
+
+    // ----------------------------------------------------
+    // TEST SECTION 6: OFFLINE FEATURES & ACCENTS TOGGLES
+    // ----------------------------------------------------
+    console.log(`${colors.yellow}${colors.bold}[Test Section 6: Offline Optimization & Accents Config]${colors.reset}`);
+
+    // Simulation of Book Cache Ratio Calculation
+    const calculateDownloadProportion = (
+        localData: any,
+        book: { bookid: number; chapters: number }
+    ) => {
+        if (!localData) return 0;
+        if (localData.apiType === "bolls") {
+            return 1.0;
+        } else if (localData.passages && localData.passages[book.bookid]) {
+            const cachedChaptersCount = Object.keys(localData.passages[book.bookid]).length;
+            const totalChapters = book.chapters || 1;
+            return Math.min(cachedChaptersCount / totalChapters, 1.0);
+        }
+        return 0;
+    };
+
+    // Test: 100% caching for Bolls translations
+    const bollsLocalData = { apiType: "bolls", passages: {} };
+    assert(
+        calculateDownloadProportion(bollsLocalData, { bookid: 1, chapters: 50 }) === 1.0,
+        "Bulk Bolls translations should report 100% cache ratio (1.0)"
+    );
+
+    // Test: Partial caching ratio (e.g. 5 of 50 chapters)
+    const apiBibleLocalData = {
+        apiType: "apibible",
+        passages: {
+            1: { 1: {}, 2: {}, 3: {}, 4: {}, 5: {} }
+        }
+    };
+    assert(
+        calculateDownloadProportion(apiBibleLocalData, { bookid: 1, chapters: 50 }) === 0.1,
+        "Partial cache ratio should equal cachedChaptersCount / totalChapters (5/50 = 0.1)"
+    );
+
+    // Test: No cache passages present
+    assert(
+        calculateDownloadProportion(null, { bookid: 1, chapters: 50 }) === 0,
+        "Null localData should report 0 cache ratio"
+    );
+
+    // Simulation of Offline Navigation block guard
+    const isNavigationAllowedOffline = (
+        isOfflineState: boolean,
+        localData: any,
+        bookId: number,
+        chapterNumber: number
+    ) => {
+        if (!isOfflineState) return true;
+        const isChapterCached = localData && (
+            localData.apiType === "bolls" ||
+            (localData.passages && localData.passages[bookId] && localData.passages[bookId][chapterNumber])
+        );
+        return !!isChapterCached;
+    };
+
+    assert(
+        isNavigationAllowedOffline(false, null, 1, 10) === true,
+        "Navigation is always allowed when online, even if uncached"
+    );
+    assert(
+        isNavigationAllowedOffline(true, apiBibleLocalData, 1, 2) === true,
+        "Navigation is allowed offline if the specific chapter is cached"
+    );
+    assert(
+        isNavigationAllowedOffline(true, apiBibleLocalData, 1, 10) === false,
+        "Navigation is blocked offline if the specific chapter is NOT cached"
+    );
+    console.log();
 }
 
 // Execute tests

@@ -93,6 +93,7 @@ interface BibleSidecarSettings {
 	esvApiKey: string;
 	enableLogging: boolean;
 	abbreviateBookNames: boolean;
+	enableOfflineAccents: boolean;
 }
 
 const DEFAULT_SETTINGS: Partial<BibleSidecarSettings> = {
@@ -103,6 +104,7 @@ const DEFAULT_SETTINGS: Partial<BibleSidecarSettings> = {
 	verseReferenceFormat: "full",
 	verseReferenceInternalLinking: false,
 	bibleLanguage: "en",
+	enableOfflineAccents: true,
 	autoExpandCallout_p: false,
 	autoExpandCalloutType_p: "quote",
 	autoExpandCalloutTitle_p: "Scripture: {{reference}}",
@@ -150,9 +152,26 @@ export class BibleView extends ItemView {
 	currentView: "books" | "chapters" | "verses" = "books";
 	activeBook: { bookid: number; name: string; chapters: number } | null = null;
 	activeChapterNumber: number | null = null;
+	private onlineListener: () => void;
+	private offlineListener: () => void;
+	private isOfflineState: boolean = !navigator.onLine;
+	private currentWindow: Window | null = null;
+	private isLoadingBooks: boolean = false;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
+	}
+
+	async logDebug(msg: string) {
+		const formatted = `[Bible Sidecar Debug] ${msg}`;
+		console.log(formatted);
+		if (this.plugin?.writeLog) {
+			try {
+				await this.plugin.writeLog(formatted);
+			} catch (e) {
+				// Ignore log writing errors
+			}
+		}
 	}
 
 	getViewType() {
@@ -220,6 +239,7 @@ export class BibleView extends ItemView {
 		super.load();
 	}
 	public async updateSettings(newSettings: BibleSidecarSettings): Promise<void> {
+		this.logDebug(`updateSettings called. currentView=${this.currentView}, activeBook=${this.activeBook ? this.activeBook.name : "null"}`);
 		this.settings = newSettings;
 		if (this.currentView === "verses" && this.activeBook && this.activeChapterNumber !== null) {
 			const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
@@ -232,7 +252,7 @@ export class BibleView extends ItemView {
 					this.activeChapterNumber
 				);
 				container.empty();
-				this.processChapterContent(
+				await this.processChapterContent(
 					chapterContentArray,
 					container,
 					mappedBook,
@@ -271,9 +291,38 @@ export class BibleView extends ItemView {
 		const foundMsg = `[Bible Sidecar Debug] Found target book: ${targetBook.name}`;
 		console.log(foundMsg);
 		if (this.plugin?.writeLog) await this.plugin.writeLog(foundMsg);
+
+		// Block navigation to uncached chapters when offline
+		if (this.isOfflineState) {
+			const localData = await this.plugin.readLocalTranslation(this.settings.bibleVersion);
+			const isChapterCached = localData && (
+				localData.apiType === "bolls" ||
+				(localData.passages && localData.passages[targetBook.bookid] && localData.passages[targetBook.bookid][chapterNumber])
+			);
+			if (!isChapterCached) {
+				new Notice(`🔌 Chapter offline: ${targetBook.name} ${chapterNumber} is not cached for offline use.`);
+				this.logDebug(`Navigation blocked: ${targetBook.name} ${chapterNumber} is not cached and view is offline.`);
+				return;
+			}
+		}
 		
-		const chapterContentArray = await this.getChapterContent(this.settings.bibleVersion, targetBook.bookid, chapterNumber);
 		const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
+		if (container) {
+			container.empty();
+			container.createDiv({ cls: "bible-loading-indicator", text: `Loading ${targetBook.name} Chapter ${chapterNumber}...` });
+		}
+
+		let chapterContentArray;
+		try {
+			chapterContentArray = await this.getChapterContent(this.settings.bibleVersion, targetBook.bookid, chapterNumber);
+		} catch (err) {
+			if (container) {
+				container.empty();
+				container.createDiv({ cls: "bible-loading-indicator", text: `Failed to load ${targetBook.name} Chapter ${chapterNumber}: ${err.message || err}` });
+			}
+			return;
+		}
+
 		if (!container) {
 			const errMsg = `[Bible Sidecar Debug] Error: .chapter-container not found in DOM`;
 			console.log(errMsg);
@@ -414,25 +463,149 @@ export class BibleView extends ItemView {
 		}, 150);
 	}
 	
+	updateOfflineStatus(forceOffline?: boolean) {
+		const isOffline = forceOffline !== undefined ? forceOffline : !navigator.onLine;
+		this.logDebug(`updateOfflineStatus called: forceOffline=${forceOffline}, navigator.onLine=${navigator.onLine}, resulting isOfflineState=${isOffline}, currentView=${this.currentView}`);
+		this.isOfflineState = isOffline;
+		
+		const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
+		if (container) {
+			container.classList.toggle("is-offline", isOffline);
+		}
+
+		const wrapper = this.containerEl.querySelector(".bible-wrapper") as HTMLElement;
+		if (wrapper) {
+			wrapper.classList.toggle("is-offline-view", isOffline);
+		}
+
+		// Target the reserved right-side slot in the active header/tabs container
+		const rightSlot = this.containerEl.querySelector(".bible-header-right-slot, .bible-tabs-right-slot") as HTMLElement;
+		if (rightSlot) {
+			rightSlot.empty();
+
+			if (isOffline && this.currentView !== "verses") {
+				// Inline outage indicator button inside the header right slot
+				const offlineBtn = rightSlot.createEl("button", {
+					cls: "bible-offline-indicator-btn",
+					attr: { "aria-label": "Offline (Click to retry connection)", "title": "Offline (Click to retry connection)" }
+				});
+				this.safeSetIcon(offlineBtn, "wifi-off");
+				
+				offlineBtn.addEventListener("click", async (e) => {
+					e.stopPropagation();
+					this.logDebug("Offline indicator button clicked. Checking connection...");
+					offlineBtn.classList.add("is-checking");
+					offlineBtn.empty();
+					this.safeSetIcon(offlineBtn, "loader");
+					
+					const online = await this.probeConnection();
+					if (online) {
+						new Notice("Connection restored! Reconnecting online.");
+						this.updateOfflineStatus(false);
+						// Refresh the current view
+						if (this.currentView === "books") {
+							await this.loadBible();
+						} else if (this.currentView === "chapters" && this.activeBook) {
+							const chapterContainer = this.containerEl.querySelector(".chapter-container") as HTMLElement;
+							if (chapterContainer) {
+								const books = await this.generateBibleBooks(this.settings.bibleVersion);
+								await this.renderChapters(this.activeBook, chapterContainer, books);
+							}
+						}
+					} else {
+						new Notice("Still offline. Please check your internet connection.");
+						offlineBtn.classList.remove("is-checking");
+						offlineBtn.empty();
+						this.safeSetIcon(offlineBtn, "wifi-off");
+					}
+				});
+			} else {
+				// Restore default empty spacing layout when online
+				if (rightSlot.classList.contains("bible-header-right-slot")) {
+					rightSlot.style.width = "32px";
+				}
+			}
+		}
+	}
+
+	async probeConnection(): Promise<boolean> {
+		try {
+			const response = await requestUrl({
+				url: "https://1.1.1.1",
+				method: "HEAD",
+				contentType: "text/plain",
+				throw: false
+			});
+			return response.status === 200 || response.status === 301 || response.status === 302;
+		} catch (e) {
+			return false;
+		}
+	}
+	
 	async onOpen() {
-		this.loadBible()
+		this.logDebug("onOpen called.");
+		this.currentWindow = this.containerEl.win || window;
+		this.logDebug(`Captured currentWindow: ${this.currentWindow === window ? "main window" : "popout window"}`);
+		this.isOfflineState = !navigator.onLine;
+		this.logDebug(`Initial isOfflineState: ${this.isOfflineState}`);
+		
+		this.onlineListener = () => {
+			this.logDebug("Window fired 'online' event.");
+			this.updateOfflineStatus(false);
+		};
+		this.offlineListener = () => {
+			this.logDebug("Window fired 'offline' event.");
+			this.updateOfflineStatus(true);
+		};
+		
+		this.currentWindow.addEventListener("online", this.onlineListener);
+		this.currentWindow.addEventListener("offline", this.offlineListener);
+		await this.loadBible();
+	}
+
+	async onClose() {
+		this.logDebug("onClose called. Cleaning up listeners.");
+		const win = this.currentWindow || this.containerEl.win || window;
+		if (this.onlineListener && win) {
+			win.removeEventListener("online", this.onlineListener);
+			this.logDebug("Removed online listener.");
+		}
+		if (this.offlineListener && win) {
+			win.removeEventListener("offline", this.offlineListener);
+			this.logDebug("Removed offline listener.");
+		}
 	}
 
 	async loadBible() {
+		if (this.isLoadingBooks) {
+			this.logDebug("loadBible ignored: books list is already loading.");
+			return;
+		}
+		this.logDebug(`loadBible called. currentView=${this.currentView}`);
+		this.isLoadingBooks = true;
 		this.currentView = "books";
 		this.activeBook = null;
 		this.activeChapterNumber = null;
-		const books = await this.generateBibleBooks(this.settings.bibleVersion);
-		this.renderBooks(books);
+		
+		this.containerEl.empty();
+		this.containerEl.createDiv({ cls: "bible-loading-indicator", text: "Loading Books..." });
+		
+		try {
+			const books = await this.generateBibleBooks(this.settings.bibleVersion);
+			await this.renderBooks(books);
+		} finally {
+			this.isLoadingBooks = false;
+		}
 	}
 
 
 	async generateBibleBooks(language: string) {
+		this.logDebug(`generateBibleBooks called with language: ${language}`);
 		const localData = await this.plugin.readLocalTranslation(this.settings.bibleVersion);
 		if (localData && localData.books && localData.books.length > 50) {
+			this.logDebug(`Found local cached books list for version ${this.settings.bibleVersion} (count: ${localData.books.length})`);
 			return localData.books;
 		}
-
 		const STANDARD_BOOK_CHAPTERS: Record<string, number> = {
 			"GEN": 50, "EXO": 40, "LEV": 27, "NUM": 36, "DEU": 34, "JOS": 24, "JDG": 21, "RUT": 4, "1SA": 31, "2SA": 24,
 			"1KI": 22, "2KI": 25, "1CH": 29, "2CH": 36, "EZR": 10, "NEH": 13, "EST": 10, "JOB": 42, "PSA": 150, "PRO": 31,
@@ -443,41 +616,57 @@ export class BibleView extends ItemView {
 			"1PE": 5, "2PE": 3, "1JN": 5, "2JN": 1, "3JN": 1, "JUD": 1, "REV": 22
 		};
 
-		if (this.settings.apiBibleEnabled && this.settings.apiBibleKey.trim()) {
-			try {
-				const response = await requestUrl({
-					url: `https://api.scripture.api.bible/v1/bibles/${this.settings.apiBibleVersionId}/books`,
-					headers: { "api-key": this.settings.apiBibleKey.trim() }
-				});
-				if (response.status === 200 && response.json?.data) {
-					const mappedBooks = response.json.data.map((book: any) => {
-						const idUpper = book.id.toUpperCase();
-						const bookIdx = BIBLE_BOOK_IDS.indexOf(idUpper);
-						const bookid = bookIdx !== -1 ? bookIdx + 1 : 100;
-						const chapters = STANDARD_BOOK_CHAPTERS[idUpper] || 1;
-						return {
-							bookid,
-							name: book.name,
-							chapters
-						};
+		if (!this.isOfflineState) {
+			this.logDebug(`Local books list not found or incomplete for ${this.settings.bibleVersion}. Attempting online fetches...`);
+
+			if (this.settings.apiBibleEnabled && this.settings.apiBibleKey.trim()) {
+				try {
+					this.logDebug(`Attempting API.Bible books fetch for version ID: ${this.settings.apiBibleVersionId}`);
+					const response = await requestUrl({
+						url: `https://api.scripture.api.bible/v1/bibles/${this.settings.apiBibleVersionId}/books`,
+						headers: { "api-key": this.settings.apiBibleKey.trim() }
 					});
-					return mappedBooks.sort((a: any, b: any) => a.bookid - b.bookid);
+					if (response.status === 200 && response.json?.data) {
+						this.logDebug("API.Bible books fetch succeeded!");
+						this.updateOfflineStatus(false);
+						const mappedBooks = response.json.data.map((book: any) => {
+							const idUpper = book.id.toUpperCase();
+							const bookIdx = BIBLE_BOOK_IDS.indexOf(idUpper);
+							const bookid = bookIdx !== -1 ? bookIdx + 1 : 100;
+							const chapters = STANDARD_BOOK_CHAPTERS[idUpper] || 1;
+							return {
+								bookid,
+								name: book.name,
+								chapters
+							};
+						});
+						return mappedBooks.sort((a: any, b: any) => a.bookid - b.bookid);
+					}
+				} catch (err) {
+					this.logDebug(`API.Bible books request failed: ${err.message || err}`);
+					console.error("API.Bible books request failed, falling back to bolls.life:", err);
+				}
+			}
+
+			try {
+				const url = `https://bolls.life/get-books/${language}`;
+				this.logDebug(`Attempting Bolls.life books fetch for version: ${language}`);
+				const response = await requestUrl(url);
+				if (response.status === 200 && response.json) {
+					this.logDebug("Bolls.life books fetch succeeded!");
+					this.updateOfflineStatus(false);
+					return response.json;
 				}
 			} catch (err) {
-				console.error("API.Bible books request failed, falling back to bolls.life:", err);
+				this.logDebug(`Bolls.life books request failed: ${err.message || err}`);
+				console.error("Bolls.life books request failed, using local offline fallback:", err);
+				this.updateOfflineStatus(true);
 			}
+		} else {
+			this.logDebug(`Offline state active (isOfflineState=${this.isOfflineState}). Skipping online books fetch entirely.`);
 		}
 
-		try {
-			const url = `https://bolls.life/get-books/${language}`;
-			const response = await requestUrl(url);
-			if (response.status === 200 && response.json) {
-				return response.json;
-			}
-		} catch (err) {
-			console.error("Bolls.life books request failed, using local offline fallback:", err);
-		}
-
+		this.logDebug("Falling back to standard Protestant book listing (offline fallback).");
 		// Fallback to standard Protestant book listing (fully offline-safe)
 		const BIBLE_BOOK_NAMES = [
 			"Genesis", "Exodus", "Leviticus", "Numbers", "Deuteronomy", "Joshua", "Judges", "Ruth", "1 Samuel", "2 Samuel",
@@ -500,74 +689,113 @@ export class BibleView extends ItemView {
 	}
 
 	async getChapterContent(version: string, bookid: number, chapter: number) {
+		this.logDebug(`getChapterContent called for version=${version}, bookid=${bookid}, chapter=${chapter}`);
 		const localData = await this.plugin.readLocalTranslation(version);
 		if (localData) {
 			const chapterVerses = localData.passages[bookid]?.[chapter];
 			if (chapterVerses) {
 				const isPremiumApi = chapterVerses.isEsvApi || chapterVerses.isApiBible;
 				if (!isPremiumApi || chapterVerses.isFullyCached) {
+					this.logDebug(`Found chapter content in local translation database/cache. isPremiumApi=${isPremiumApi}, isFullyCached=${chapterVerses.isFullyCached}`);
 					return chapterVerses;
+				} else {
+					this.logDebug("Found premium API chapter skeleton in local database, but it is not fully cached. Proceeding to online fetch.");
 				}
+			} else {
+				this.logDebug("Chapter verses not found in local database.");
 			}
+		} else {
+			this.logDebug("No local database found for version.");
 		}
 
-		if (this.settings.esvApiEnabled && this.settings.esvApiKey.trim() && version.toUpperCase() === "ESV") {
-			const bookId = BIBLE_BOOK_IDS[bookid - 1] || "GEN";
-			try {
-				const query = `${bookId} ${chapter}`;
-				const response = await requestUrl({
-					url: `https://api.esv.org/v3/passage/html/?q=${encodeURIComponent(query)}&include-verse-numbers=true&include-first-verse-numbers=true&include-headings=false&include-footnotes=false&include-audio-link=false&include-passage-references=false&include-copyright=false&include-short-copyright=false&wrapping-div=false`,
-					headers: { "Authorization": `Token ${this.settings.esvApiKey.trim()}` }
-				});
-				if (response.status === 200 && response.json?.passages?.[0]) {
-					if (this.plugin?.writeLog) {
-						await this.plugin.writeLog(`ESV API raw HTML for ${bookId} ${chapter}:\n${response.json.passages[0]}`);
+		if (!this.isOfflineState) {
+			if (this.settings.esvApiEnabled && this.settings.esvApiKey.trim() && version.toUpperCase() === "ESV") {
+				const bookId = BIBLE_BOOK_IDS[bookid - 1] || "GEN";
+				try {
+					const query = `${bookId} ${chapter}`;
+					this.logDebug(`Attempting ESV API query: ${query}`);
+					const response = await requestUrl({
+						url: `https://api.esv.org/v3/passage/html/?q=${encodeURIComponent(query)}&include-verse-numbers=true&include-first-verse-numbers=true&include-headings=false&include-footnotes=false&include-audio-link=false&include-passage-references=false&include-copyright=false&include-short-copyright=false&wrapping-div=false`,
+						headers: { "Authorization": `Token ${this.settings.esvApiKey.trim()}` }
+					});
+					if (response.status === 200 && response.json?.passages?.[0]) {
+						this.logDebug("ESV API fetch succeeded!");
+						this.updateOfflineStatus(false);
+						if (this.plugin?.writeLog) {
+							await this.plugin.writeLog(`ESV API raw HTML for ${bookId} ${chapter}:\n${response.json.passages[0]}`);
+						}
+						const content = { isEsvApi: true, html: response.json.passages[0], isFullyCached: true };
+						this.plugin.cachePassageLocally(version, bookid, chapter, bookId, content);
+						return content;
 					}
-					const content = { isEsvApi: true, html: response.json.passages[0], isFullyCached: true };
-					this.plugin.cachePassageLocally(version, bookid, chapter, bookId, content);
-					return content;
+				} catch (err) {
+					this.logDebug(`ESV API chapter request failed: ${err.message || err}`);
+					console.error("ESV API chapter request failed, falling back:", err);
 				}
-			} catch (err) {
-				console.error("ESV API chapter request failed, falling back:", err);
 			}
-		}
 
-		if (this.settings.apiBibleEnabled && this.settings.apiBibleKey.trim()) {
-			const bookId = BIBLE_BOOK_IDS[bookid - 1] || "GEN";
-			try {
-				const response = await requestUrl({
-					url: `https://api.scripture.api.bible/v1/bibles/${this.settings.apiBibleVersionId}/chapters/${bookId}.${chapter}?include-verse-spans=true`,
-					headers: { "api-key": this.settings.apiBibleKey.trim() }
-				});
-				if (response.status === 200 && response.json?.data?.content) {
-					if (this.plugin?.writeLog) {
-						await this.plugin.writeLog(`API.Bible raw HTML for ${bookId} ${chapter}:\n${response.json.data.content}`);
+			if (this.settings.apiBibleEnabled && this.settings.apiBibleKey.trim()) {
+				const bookId = BIBLE_BOOK_IDS[bookid - 1] || "GEN";
+				try {
+					this.logDebug(`Attempting API.Bible fetch for version: ${this.settings.apiBibleVersionId}, passage: ${bookId} ${chapter}`);
+					const response = await requestUrl({
+						url: `https://api.scripture.api.bible/v1/bibles/${this.settings.apiBibleVersionId}/chapters/${bookId}.${chapter}?include-verse-spans=true`,
+						headers: { "api-key": this.settings.apiBibleKey.trim() }
+					});
+					if (response.status === 200 && response.json?.data?.content) {
+						this.logDebug("API.Bible fetch succeeded!");
+						this.updateOfflineStatus(false);
+						if (this.plugin?.writeLog) {
+							await this.plugin.writeLog(`API.Bible raw HTML for ${bookId} ${chapter}:\n${response.json.data.content}`);
+						}
+						const content = { isApiBible: true, html: response.json.data.content, isFullyCached: true };
+						this.plugin.cachePassageLocally(version, bookid, chapter, bookId, content);
+						return content;
 					}
-					const content = { isApiBible: true, html: response.json.data.content, isFullyCached: true };
-					this.plugin.cachePassageLocally(version, bookid, chapter, bookId, content);
-					return content;
+				} catch (err) {
+					this.logDebug(`API.Bible chapter request failed: ${err.message || err}`);
+					console.error("API.Bible chapter request failed, falling back to bolls.life:", err);
 				}
-			} catch (err) {
-				console.error("API.Bible chapter request failed, falling back to bolls.life:", err);
 			}
-		}
 
-		const url = `https://bolls.life/get-chapter/${version}/${bookid}/${chapter}`;
-		const response = await requestUrl(url);
-		if (response.status === 200) {
-			this.plugin.cachePassageLocally(version, bookid, chapter, "Book", response.json);
+			try {
+				const url = `https://bolls.life/get-chapter/${version}/${bookid}/${chapter}`;
+				this.logDebug(`Attempting Bolls.life fetch: ${url}`);
+				const response = await requestUrl(url);
+				if (response.status === 200) {
+					this.logDebug("Bolls.life fetch succeeded!");
+					this.updateOfflineStatus(false);
+					this.plugin.cachePassageLocally(version, bookid, chapter, "Book", response.json);
+					return response.json;
+				}
+				throw new Error(`Request failed with status ${response.status}`);
+			} catch (err) {
+				this.logDebug(`Bolls.life chapter request failed: ${err.message || err}`);
+				console.error("Bolls.life chapter request failed, using local offline fallback:", err);
+				this.updateOfflineStatus(true);
+				throw err;
+			}
+		} else {
+			this.logDebug(`Offline state active (isOfflineState=${this.isOfflineState}). Skipping online chapter fetches.`);
+			throw new Error("Offline: Online fetches bypassed.");
 		}
-		return response.json;
 	}
 
 
-	renderBooks(books: { bookid: number; name: string; chapters: number }[]) {
+	async renderBooks(books: { bookid: number; name: string; chapters: number }[]) {
+		this.logDebug(`renderBooks called with ${books?.length} books. isOfflineState=${this.isOfflineState}`);
 		const { containerEl } = this;
 		containerEl.empty();
+
+		const localData = await this.plugin.readLocalTranslation(this.settings.bibleVersion);
+		const isOffline = this.isOfflineState;
 
 		const ChapterWrapper = containerEl.createEl("div", {
 			cls: "bible-wrapper",
 		});
+		if (this.settings.enableOfflineAccents) {
+			ChapterWrapper.classList.add("enable-offline-accents");
+		}
 
 		// 1. Search bar (fixed at top of wrapper)
 		const searchContainer = ChapterWrapper.createDiv({ cls: "bible-search-container" });
@@ -593,10 +821,11 @@ export class BibleView extends ItemView {
 
 		// Add Browse/Search view tabs
 		const tabsContainer = searchContainer.createDiv({ cls: "bible-tabs-container" });
-		const browseTab = tabsContainer.createEl("button", { cls: "bible-tab-btn active", text: "Browse" });
-		const searchTab = tabsContainer.createEl("button", { cls: "bible-tab-btn", text: "Search Scripture" });
+		const tabsWrapper = tabsContainer.createDiv({ cls: "bible-tabs-inner" });
+		const browseTab = tabsWrapper.createEl("button", { cls: "bible-tab-btn active", text: "Browse" });
+		const searchTab = tabsWrapper.createEl("button", { cls: "bible-tab-btn", text: "Search Scripture" });
+		tabsContainer.createDiv({ cls: "bible-tabs-right-slot" });
 
-		// 2. Scrolling content area
 		const chapterContainer = ChapterWrapper.createEl("div", {
 			cls: "chapter-container",
 		});
@@ -608,12 +837,26 @@ export class BibleView extends ItemView {
 		// Old Testament section
 		const oldHeader = browseViewEl.createDiv({ cls: "bible-testament-header" });
 		oldHeader.createSpan({ text: "OLD TESTAMENT", cls: "bible-testament-label" });
+		const oldChevron = oldHeader.createDiv({ cls: "bible-testament-chevron" });
+		this.safeSetIcon(oldChevron, "chevron-down");
 		const oldGrid = browseViewEl.createDiv({ cls: "bible-books-grid" });
+		oldHeader.addEventListener("click", () => {
+			const isCollapsed = oldGrid.style.display === "none";
+			oldGrid.style.display = isCollapsed ? "grid" : "none";
+			oldHeader.classList.toggle("is-collapsed", !isCollapsed);
+		});
 
 		// New Testament section
 		const newHeader = browseViewEl.createDiv({ cls: "bible-testament-header" });
 		newHeader.createSpan({ text: "NEW TESTAMENT", cls: "bible-testament-label" });
+		const newChevron = newHeader.createDiv({ cls: "bible-testament-chevron" });
+		this.safeSetIcon(newChevron, "chevron-down");
 		const newGrid = browseViewEl.createDiv({ cls: "bible-books-grid" });
+		newHeader.addEventListener("click", () => {
+			const isCollapsed = newGrid.style.display === "none";
+			newGrid.style.display = isCollapsed ? "grid" : "none";
+			newHeader.classList.toggle("is-collapsed", !isCollapsed);
+		});
 
 		const noResults = browseViewEl.createDiv({
 			cls: "no-results-message",
@@ -629,10 +872,28 @@ export class BibleView extends ItemView {
 
 		const addCards = (list: typeof books, grid: HTMLElement) => {
 			for (const book of list) {
+				const isBookCached = localData && (
+					localData.apiType === "bolls" || 
+					(localData.passages && localData.passages[book.bookid] && Object.keys(localData.passages[book.bookid]).length > 0)
+				);
+
+				let downloadProportion = 0;
+				if (localData) {
+					if (localData.apiType === "bolls") {
+						downloadProportion = 1.0;
+					} else if (localData.passages && localData.passages[book.bookid]) {
+						const cachedChaptersCount = Object.keys(localData.passages[book.bookid]).length;
+						const totalChapters = book.chapters || 1;
+						downloadProportion = Math.min(cachedChaptersCount / totalChapters, 1.0);
+					}
+				}
+
 				const card = grid.createEl("button", {
-					cls: "bible-book-card",
+					cls: isBookCached ? "bible-book-card is-cached" : "bible-book-card",
 					attr: { id: book.bookid.toString() }
 				});
+				card.style.setProperty("--download-proportion", downloadProportion.toString());
+				
 				const bookDisplayName = this.settings.abbreviateBookNames
 					? (BIBLE_BOOK_IDS[book.bookid - 1] || book.name)
 					: book.name;
@@ -667,6 +928,18 @@ export class BibleView extends ItemView {
 			oldHeader.style.display = oldVisible > 0 ? "flex" : "none";
 			newHeader.style.display = newVisible > 0 ? "flex" : "none";
 			noResults.style.display = oldVisible === 0 && newVisible === 0 ? "block" : "none";
+
+			// Auto-expand sections during search so matching books are actually shown
+			if (searchQuery.trim().length > 0) {
+				if (oldVisible > 0) {
+					oldGrid.style.display = "grid";
+					oldHeader.classList.remove("is-collapsed");
+				}
+				if (newVisible > 0) {
+					newGrid.style.display = "grid";
+					newHeader.classList.remove("is-collapsed");
+				}
+			}
 		};
 
 		let searchQuery = "";
@@ -725,6 +998,7 @@ export class BibleView extends ItemView {
 			}
 			searchInput.focus();
 		});
+		this.updateOfflineStatus(this.isOfflineState);
 	}
 
 	async renderChapters(
@@ -732,13 +1006,23 @@ export class BibleView extends ItemView {
 		chapterContainer: HTMLElement,
 		books: { bookid: number; name: string; chapters: number }[]
 	) {
+		this.logDebug(`renderChapters called for book: ${book.name} (id: ${book.bookid}, chapters: ${book.chapters}). isOfflineState=${this.isOfflineState}`);
 		this.currentView = "chapters";
 		this.activeBook = book;
 		this.activeChapterNumber = null;
 		chapterContainer.empty();
 
+		const localData = await this.plugin.readLocalTranslation(this.settings.bibleVersion);
+		const isOffline = this.isOfflineState;
+		chapterContainer.classList.toggle("is-offline", isOffline);
+
 		const wrapper = chapterContainer.parentElement;
 		if (wrapper) {
+			if (this.settings.enableOfflineAccents) {
+				wrapper.classList.add("enable-offline-accents");
+			} else {
+				wrapper.classList.remove("enable-offline-accents");
+			}
 			// Remove searchContainer if it exists
 			const search = wrapper.querySelector(".bible-search-container");
 			if (search) search.remove();
@@ -758,7 +1042,7 @@ export class BibleView extends ItemView {
 			});
 			this.safeSetIcon(backBtn, "arrow-left");
 			backBtn.addEventListener("click", () => {
-				this.onOpen();
+				this.loadBible();
 			});
 			
 			const titleEl = header.createEl("div", { cls: "bible-header-title" });
@@ -777,36 +1061,53 @@ export class BibleView extends ItemView {
 		const chaptersGrid = chapterContainer.createDiv({ cls: "bible-chapters-grid" });
 
 		for (let i = 1; i <= book.chapters; i++) {
-			chaptersGrid
-				.createEl("button", {
-					text: i.toString(),
-					cls: "chapter-button",
-				})
-				.addEventListener("click", async () => {
-					const chapterContentArray = await this.getChapterContent(this.settings.bibleVersion,
-						book.bookid,
-						i
-					);
-					chapterContainer.empty();
+			const isChapterCached = localData && (
+				localData.apiType === "bolls" ||
+				(localData.passages && localData.passages[book.bookid] && localData.passages[book.bookid][i])
+			);
 
-					this.processChapterContent(
-						chapterContentArray,
-						chapterContainer,
-						book,
-						i,
-						books
-					);
+			const btn = chaptersGrid.createEl("button", {
+				text: i.toString(),
+				cls: isChapterCached ? "chapter-button is-cached" : "chapter-button",
+			});
+			btn.style.setProperty("--download-proportion", isChapterCached ? "1" : "0");
+			
+			btn.addEventListener("click", async () => {
+				this.logDebug(`Chapter button clicked: ${book.name} Chapter ${i}`);
+				chapterContainer.empty();
+				chapterContainer.createDiv({ cls: "bible-loading-indicator", text: `Loading ${book.name} Chapter ${i}...` });
+
+					try {
+						const chapterContentArray = await this.getChapterContent(this.settings.bibleVersion,
+							book.bookid,
+							i
+						);
+						chapterContainer.empty();
+						await this.processChapterContent(
+							chapterContentArray,
+							chapterContainer,
+							book,
+							i,
+							books
+						);
+					} catch (err) {
+						this.logDebug(`Failed to load ${book.name} Chapter ${i}: ${err.message || err}`);
+						chapterContainer.empty();
+						await this.renderChapters(book, chapterContainer, books);
+					}
 				});
 		}
+		this.updateOfflineStatus(this.isOfflineState);
 	}
 
-	processChapterContent(
+	async processChapterContent(
 		chapter: { verse: string; text: string }[],
 		chapterContainer: HTMLElement,
 		book: { bookid: number; name: string; chapters: number },
 		i: number,
 		books: { bookid: number; name: string; chapters: number }[]
 	) {
+		this.logDebug(`processChapterContent called for ${book.name} Chapter ${i}. separateVersesSidecar=${this.settings.separateVersesSidecar}`);
 		this.currentView = "verses";
 		this.activeBook = book;
 		this.activeChapterNumber = i;
@@ -827,11 +1128,13 @@ export class BibleView extends ItemView {
 			// Render the navigation inside header
 			const backBtn = header.createEl("button", {
 				cls: "bible-icon-btn",
-				attr: { "aria-label": "Back to Books", "title": "Back to Books" }
+				attr: { "aria-label": "Back to Chapters", "title": "Back to Chapters" }
 			});
-			this.safeSetIcon(backBtn, "book-open");
-			backBtn.addEventListener("click", () => {
-				this.onOpen();
+			this.safeSetIcon(backBtn, "arrow-left");
+			backBtn.addEventListener("click", async () => {
+				this.logDebug(`Back to Chapters clicked. Going back to chapter selection for book: ${book.name}`);
+				chapterContainer.empty();
+				await this.renderChapters(book, chapterContainer, books);
 			});
 			
 			const titleEl = header.createEl("div", { cls: "bible-header-title" });
@@ -849,44 +1152,86 @@ export class BibleView extends ItemView {
 				attr: { "aria-label": "Previous Chapter", "title": "Previous Chapter" }
 			});
 			this.safeSetIcon(prevBtn, "chevron-left");
+
+			const localData = await this.plugin.readLocalTranslation(this.settings.bibleVersion);
+			const isChapterAvailable = (bId: number, cNum: number) => {
+				if (!this.isOfflineState) return true;
+				if (!localData) return false;
+				if (localData.apiType === "bolls") return true;
+				const available = !!(localData.passages?.[bId]?.[cNum]?.isFullyCached);
+				this.logDebug(`Checking offline availability for Book ${bId} Chapter ${cNum}: ${available}`);
+				return available;
+			};
 			
 			if (book.bookid === 1 && i === 1) {
+				this.logDebug("Disabling prevBtn: reached start of Bible (Genesis 1).");
 				prevBtn.setAttribute("disabled", "true");
 				prevBtn.style.opacity = "0.3";
 				prevBtn.style.pointerEvents = "none";
+			} else {
+				let prevBookId = book.bookid;
+				let prevChapterNum = i - 1;
+				if (prevChapterNum < 1) {
+					prevBookId = book.bookid - 1;
+					const prevBook = books[prevBookId - 1];
+					prevChapterNum = prevBook ? prevBook.chapters : 1;
+				}
+				const prevAvailable = isChapterAvailable(prevBookId, prevChapterNum);
+				this.logDebug(`Prev chapter details: Book ID ${prevBookId}, Chapter ${prevChapterNum}. Available: ${prevAvailable}`);
+				if (!prevAvailable) {
+					this.logDebug("Disabling prevBtn: previous chapter is not cached/downloaded offline.");
+					prevBtn.setAttribute("disabled", "true");
+					prevBtn.style.opacity = "0.3";
+					prevBtn.style.pointerEvents = "none";
+				}
 			}
 			
 			prevBtn.addEventListener("click", async () => {
 				let newChapter = i - 1;
-				if (newChapter < 1) {
-					if (book.bookid > 1) {
-						const prevBook = books[book.bookid - 2];
-						const prevChapterContent = await this.getChapterContent(this.settings.bibleVersion,
-							prevBook.bookid,
-							prevBook.chapters
+				this.logDebug(`prevBtn clicked. currentChapter=${i}, newChapter=${newChapter}`);
+				
+				// Empty container and show loading state immediately to prevent double-clicks
+				chapterContainer.empty();
+
+				try {
+					if (newChapter < 1) {
+						if (book.bookid > 1) {
+							const prevBook = books[book.bookid - 2];
+							chapterContainer.createDiv({ cls: "bible-loading-indicator", text: `Loading ${prevBook.name} Chapter ${prevBook.chapters}...` });
+							this.logDebug(`Moving back to previous book: ${prevBook.name} Chapter ${prevBook.chapters}`);
+							const prevChapterContent = await this.getChapterContent(this.settings.bibleVersion,
+								prevBook.bookid,
+								prevBook.chapters
+							);
+							chapterContainer.empty();
+							await this.processChapterContent(
+								prevChapterContent,
+								chapterContainer,
+								prevBook,
+								prevBook.chapters,
+								books
+							);
+						}
+					} else {
+						chapterContainer.createDiv({ cls: "bible-loading-indicator", text: `Loading ${book.name} Chapter ${newChapter}...` });
+						this.logDebug(`Moving back to previous chapter of current book: Chapter ${newChapter}`);
+						const previousChapterContent = await this.getChapterContent(this.settings.bibleVersion,
+							book.bookid,
+							newChapter
 						);
 						chapterContainer.empty();
-						this.processChapterContent(
-							prevChapterContent,
+						await this.processChapterContent(
+							previousChapterContent,
 							chapterContainer,
-							prevBook,
-							prevBook.chapters,
+							book,
+							newChapter,
 							books
 						);
 					}
-				} else {
-					const previousChapterContent = await this.getChapterContent(this.settings.bibleVersion,
-						book.bookid,
-						newChapter
-					);
+				} catch (err) {
+					this.logDebug(`Failed to navigate to previous chapter: ${err.message || err}`);
 					chapterContainer.empty();
-					this.processChapterContent(
-						previousChapterContent,
-						chapterContainer,
-						book,
-						newChapter,
-						books
-					);
+					await this.processChapterContent(chapter, chapterContainer, book, i, books);
 				}
 			});
 			
@@ -897,44 +1242,75 @@ export class BibleView extends ItemView {
 			this.safeSetIcon(nextBtn, "chevron-right");
 			
 			if (book.bookid === books.length && i === book.chapters) {
+				this.logDebug("Disabling nextBtn: reached end of Bible (Revelation 22).");
 				nextBtn.setAttribute("disabled", "true");
 				nextBtn.style.opacity = "0.3";
 				nextBtn.style.pointerEvents = "none";
+			} else {
+				let nextBookId = book.bookid;
+				let nextChapterNum = i + 1;
+				if (nextChapterNum > book.chapters) {
+					nextBookId = book.bookid + 1;
+					nextChapterNum = 1;
+				}
+				const nextAvailable = isChapterAvailable(nextBookId, nextChapterNum);
+				this.logDebug(`Next chapter details: Book ID ${nextBookId}, Chapter ${nextChapterNum}. Available: ${nextAvailable}`);
+				if (!nextAvailable) {
+					this.logDebug("Disabling nextBtn: next chapter is not cached/downloaded offline.");
+					nextBtn.setAttribute("disabled", "true");
+					nextBtn.style.opacity = "0.3";
+					nextBtn.style.pointerEvents = "none";
+				}
 			}
 			
 			nextBtn.addEventListener("click", async () => {
 				let newChapter = i + 1;
-				if (newChapter > book.chapters) {
-					if (book.bookid < books.length) {
-						const newBookId = book.bookid + 1;
-						const newBook = books[newBookId - 1];
-						newChapter = 1;
+				this.logDebug(`nextBtn clicked. currentChapter=${i}, newChapter=${newChapter}`);
+				
+				// Empty container and show loading state immediately to prevent double-clicks
+				chapterContainer.empty();
+
+				try {
+					if (newChapter > book.chapters) {
+						if (book.bookid < books.length) {
+							const newBookId = book.bookid + 1;
+							const newBook = books[newBookId - 1];
+							chapterContainer.createDiv({ cls: "bible-loading-indicator", text: `Loading ${newBook.name} Chapter 1...` });
+							this.logDebug(`Moving forward to next book: ${newBook.name} Chapter 1`);
+							newChapter = 1;
+							const nextChapterContent = await this.getChapterContent(this.settings.bibleVersion,
+								newBookId,
+								newChapter
+							);
+							chapterContainer.empty();
+							await this.processChapterContent(
+								nextChapterContent,
+								chapterContainer,
+								newBook,
+								newChapter,
+								books
+							);
+						}
+					} else {
+						chapterContainer.createDiv({ cls: "bible-loading-indicator", text: `Loading ${book.name} Chapter ${newChapter}...` });
+						this.logDebug(`Moving forward to next chapter of current book: Chapter ${newChapter}`);
 						const nextChapterContent = await this.getChapterContent(this.settings.bibleVersion,
-							newBookId,
+							book.bookid,
 							newChapter
 						);
 						chapterContainer.empty();
-						this.processChapterContent(
+						await this.processChapterContent(
 							nextChapterContent,
 							chapterContainer,
-							newBook,
+							book,
 							newChapter,
 							books
 						);
 					}
-				} else {
-					const nextChapterContent = await this.getChapterContent(this.settings.bibleVersion,
-						book.bookid,
-						newChapter
-					);
+				} catch (err) {
+					this.logDebug(`Failed to navigate to next chapter: ${err.message || err}`);
 					chapterContainer.empty();
-					this.processChapterContent(
-						nextChapterContent,
-						chapterContainer,
-						book,
-						newChapter,
-						books
-					);
+					await this.processChapterContent(chapter, chapterContainer, book, i, books);
 				}
 			});
 		}
@@ -972,7 +1348,16 @@ export class BibleView extends ItemView {
 					let text = "";
 					let next = span.nextSibling;
 					const verseClass = isEsv ? "verse-num" : "v";
-					while (next && !(next instanceof Element && (next.classList.contains(verseClass) || next.classList.contains("chapter-num") || (next.tagName.toLowerCase() === "b" && next.classList.contains("verse-num"))))) {
+					if (!next && !isEsv && span.parentElement && span.parentElement.classList.contains("verse-span")) {
+						next = span.parentElement.nextSibling;
+					}
+					while (next && !(next instanceof Element && (
+						next.classList.contains(verseClass) || 
+						(!isEsv && next.querySelector("." + verseClass)) ||
+						next.classList.contains("chapter-num") || 
+						(next.tagName.toLowerCase() === "b" && next.classList.contains("verse-num")) ||
+						(next.tagName.toLowerCase() === "span" && next.classList.contains("chapter-num"))
+					))) {
 						text += next.textContent || "";
 						next = next.nextSibling;
 					}
@@ -1065,9 +1450,13 @@ export class BibleView extends ItemView {
 					const siblingsToWrap: Node[] = [];
 					let next = span.nextSibling;
 					const verseClass = isEsv ? "verse-num" : "v";
+					if (!next && !isEsv && span.parentElement && span.parentElement.classList.contains("verse-span")) {
+						next = span.parentElement.nextSibling;
+					}
 					
 					while (next && !(next instanceof Element && (
 						next.classList.contains(verseClass) || 
+						(!isEsv && next.querySelector("." + verseClass)) ||
 						next.classList.contains("chapter-num") || 
 						(next.tagName.toLowerCase() === "b" && next.classList.contains("verse-num")) ||
 						(next.tagName.toLowerCase() === "span" && next.classList.contains("chapter-num"))
@@ -1434,7 +1823,10 @@ export class BibleView extends ItemView {
 							
 							let text = "";
 							let next = span.nextSibling;
-							while (next && !(next instanceof Element && next.classList.contains("v"))) {
+							if (!next && span.parentElement && span.parentElement.classList.contains("verse-span")) {
+								next = span.parentElement.nextSibling;
+							}
+							while (next && !(next instanceof Element && (next.classList.contains("v") || next.querySelector(".v")))) {
 								text += next.textContent || "";
 								next = next.nextSibling;
 							}

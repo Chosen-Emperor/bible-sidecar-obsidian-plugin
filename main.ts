@@ -49,6 +49,7 @@ interface BibleSidecarSettings {
 	esvApiKey: string;
 	enableLogging: boolean;
 	abbreviateBookNames: boolean;
+	enableOfflineAccents: boolean;
 }
 
 export const DEFAULT_SETTINGS: Partial<BibleSidecarSettings> = {
@@ -62,6 +63,7 @@ export const DEFAULT_SETTINGS: Partial<BibleSidecarSettings> = {
 	autoExpandReferenceStyle: "plain",
 	autoExpandScriptureStyle: "plain",
 	bibleLanguage: "en",
+	enableOfflineAccents: true,
 	autoExpandCallout_p: false,
 	autoExpandCalloutType_p: "quote",
 	autoExpandCalloutTitle_p: "Scripture: {{reference}}",
@@ -109,8 +111,12 @@ export default class BibleSidecarPlugin extends Plugin {
 	apiBiblesCache: { id: string; name: string }[] | null = null;
 	private saveDebounceTimer: NodeJS.Timeout | null = null;
 
+	get pluginDir(): string {
+		return `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
+	}
+
 	async getDownloadedTranslations(): Promise<string[]> {
-		const dir = `${this.manifest.dir}/translations`;
+		const dir = `${this.pluginDir}/translations`;
 		try {
 			const exists = await this.app.vault.adapter.exists(dir);
 			if (!exists) return [];
@@ -130,7 +136,7 @@ export default class BibleSidecarPlugin extends Plugin {
 	}
 
 	async isTranslationDownloaded(version: string): Promise<boolean> {
-		const filePath = `${this.manifest.dir}/translations/${version.toUpperCase()}.json`;
+		const filePath = `${this.pluginDir}/translations/${version.toUpperCase()}.json`;
 		try {
 			return await this.app.vault.adapter.exists(filePath);
 		} catch (e) {
@@ -139,7 +145,7 @@ export default class BibleSidecarPlugin extends Plugin {
 	}
 
 	async readLocalTranslation(version: string): Promise<any | null> {
-		const filePath = `${this.manifest.dir}/translations/${version.toUpperCase()}.json`;
+		const filePath = `${this.pluginDir}/translations/${version.toUpperCase()}.json`;
 		try {
 			const exists = await this.app.vault.adapter.exists(filePath);
 			if (!exists) return null;
@@ -152,7 +158,7 @@ export default class BibleSidecarPlugin extends Plugin {
 	}
 
 	async downloadTranslation(version: string, onProgress: (progress: number) => void): Promise<void> {
-		const dir = `${this.manifest.dir}/translations`;
+		const dir = `${this.pluginDir}/translations`;
 		const dirExists = await this.app.vault.adapter.exists(dir);
 		if (!dirExists) {
 			await this.app.vault.adapter.mkdir(dir);
@@ -322,7 +328,7 @@ export default class BibleSidecarPlugin extends Plugin {
 	}
 
 	async deleteTranslation(version: string): Promise<void> {
-		const filePath = `${this.manifest.dir}/translations/${version.toUpperCase()}.json`;
+		const filePath = `${this.pluginDir}/translations/${version.toUpperCase()}.json`;
 		const exists = await this.app.vault.adapter.exists(filePath);
 		if (exists) {
 			await this.app.vault.adapter.remove(filePath);
@@ -361,7 +367,7 @@ export default class BibleSidecarPlugin extends Plugin {
 	}
 
 	async cachePassageLocally(version: string, bookid: number, chapter: number, bookName: string, content: any): Promise<void> {
-		const dir = `${this.manifest.dir}/translations`;
+		const dir = `${this.pluginDir}/translations`;
 		const filePath = `${dir}/${version.toUpperCase()}.json`;
 		try {
 			const dirExists = await this.app.vault.adapter.exists(dir);
@@ -408,7 +414,7 @@ export default class BibleSidecarPlugin extends Plugin {
 	async writeLog(message: string) {
 		if (!this.settings.enableLogging) return;
 		try {
-			const logPath = `${this.manifest.dir}/bible-sidecar-plus-debug.log`;
+			const logPath = `${this.pluginDir}/bible-sidecar-plus-debug.log`;
 			const timestamp = new Date().toISOString();
 			const formattedMessage = `[${timestamp}] ${message}\n`;
 			
@@ -993,7 +999,10 @@ export default class BibleSidecarPlugin extends Plugin {
 								if (isWithinRange) {
 									let text = "";
 									let next = span.nextSibling;
-									while (next && !(next instanceof Element && next.classList.contains("v"))) {
+									if (!next && span.parentElement && span.parentElement.classList.contains("verse-span")) {
+										next = span.parentElement.nextSibling;
+									}
+									while (next && !(next instanceof Element && (next.classList.contains("v") || next.querySelector(".v")))) {
 										text += next.textContent || "";
 										next = next.nextSibling;
 									}
@@ -1085,7 +1094,10 @@ export default class BibleSidecarPlugin extends Plugin {
 										if (isWithinRange) {
 											let text = "";
 											let next = span.nextSibling;
-											while (next && !(next instanceof Element && next.classList.contains("v"))) {
+											if (!next && span.parentElement && span.parentElement.classList.contains("verse-span")) {
+												next = span.parentElement.nextSibling;
+											}
+											while (next && !(next instanceof Element && (next.classList.contains("v") || next.querySelector(".v")))) {
 												text += next.textContent || "";
 												next = next.nextSibling;
 											}
