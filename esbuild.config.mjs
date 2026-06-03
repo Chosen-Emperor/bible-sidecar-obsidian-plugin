@@ -1,6 +1,8 @@
 import esbuild from "esbuild";
 import process from "process";
 import builtins from "builtin-modules";
+import fs from "fs";
+import path from "path";
 
 const banner =
 `/*
@@ -10,6 +12,26 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = (process.argv[2] === "production");
+
+const copyToVaultPlugin = {
+	name: 'copy-to-vault',
+	setup(build) {
+		build.onEnd(() => {
+			const vaultPluginDir = "C:\\Users\\rayni\\Documents\\Obsidian Vault\\.obsidian\\plugins\\bible-sidecar-plus";
+			try {
+				if (!fs.existsSync(vaultPluginDir)) {
+					fs.mkdirSync(vaultPluginDir, { recursive: true });
+				}
+				fs.copyFileSync("main.js", path.join(vaultPluginDir, "main.js"));
+				fs.copyFileSync("manifest.json", path.join(vaultPluginDir, "manifest.json"));
+				fs.copyFileSync("styles.css", path.join(vaultPluginDir, "styles.css"));
+				console.log(`[copy-to-vault] Successfully copied files to Obsidian Vault!`);
+			} catch (err) {
+				console.error(`[copy-to-vault] Error copying files:`, err);
+			}
+		});
+	}
+};
 
 const context = await esbuild.context({
 	banner: {
@@ -38,6 +60,7 @@ const context = await esbuild.context({
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,
 	outfile: "main.js",
+	plugins: [copyToVaultPlugin],
 });
 
 if (prod) {
