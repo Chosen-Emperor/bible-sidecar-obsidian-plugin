@@ -965,7 +965,7 @@ export class BibleView extends ItemView {
 							.replace(/\u201c([^\u201d]+)\u201d/g, '\u201c<span style="color: red;">$1</span>\u201d');
 					}
 
-					inlineHTML += `<span class="verse-num">${formattedVerseNumber}</span>\u00A0${displayHtml}`;
+					inlineHTML += `<span class="verse-inline" data-verse="${verse.verse}"><span class="verse-num">${formattedVerseNumber}</span>\u00A0${displayHtml}</span> `;
 				}
 				chapterContent.innerHTML = inlineHTML;
 			}
@@ -976,6 +976,16 @@ export class BibleView extends ItemView {
 			if (selection && !selection.isCollapsed) {
 				e.preventDefault(); 
 				this.renderCopyMessage(book, i, selection.toString()); 
+			}
+		});
+
+		// Highlight verse when clicked/touched inside sidecar
+		chapterContent.addEventListener("click", (e: MouseEvent) => {
+			const target = e.target as HTMLElement;
+			const verseEl = target.closest(".verse") || target.closest(".verse-inline") || target.closest(".verse-num");
+			if (verseEl) {
+				chapterContent.querySelectorAll(".active-verse").forEach(el => el.classList.remove("active-verse"));
+				verseEl.classList.add("active-verse");
 			}
 		});
 

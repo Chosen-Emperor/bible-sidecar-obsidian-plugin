@@ -386,6 +386,14 @@
     animation-fill-mode: forwards;
 }
 
+[data-type="bible-view-plus"] .verse-num.active-verse {
+    background-color: rgba(var(--interactive-accent-rgb, 255, 179, 0), 0.35);
+    border-radius: 3px;
+    padding: 0 4px;
+    animation: activeVerseHighlight 3.5s cubic-bezier(0.25, 1, 0.5, 1) 1;
+    animation-fill-mode: forwards;
+}
+
 /* Verse number formatting */
 [data-type="bible-view-plus"] .verse-num {
     color: var(--text-accent);
