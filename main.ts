@@ -893,12 +893,6 @@ export default class BibleSidecarPlugin extends Plugin {
 						});
 						if (versesArray.length > 0) {
 							fetchSuccess = true;
-							const bookid = this.getBookIdFromName(bookName);
-							this.cachePassageLocally(this.settings.bibleVersion, bookid, startChapter, bookName, {
-								isEsvApi: true,
-								isFullyCached: true,
-								html: response.json.passages[0]
-							});
 						}
 					}
 				} catch (err) {
