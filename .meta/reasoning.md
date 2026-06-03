@@ -1,13 +1,10 @@
-# Reasoning - Highlight Refinements & User-Friendly Settings
+# Reasoning - Selective Highlights & settings details panel open state persistence
 
-This document records reasoning for the highlighting refinements and settings toggle behavior modifications.
+This document tracks reasoning for highlight refinements (nested vs double highlighting) and settings details state persistence.
 
 ## Design Philosophies
-- **Clean Reading Experience**: Permanent Selection Underlines can be visually distracting and look cluttered during general reading. Restricting active styling to dynamic background animations ensures a clean layout.
-- **Accurate Presentation of Premium Texts**: Verse highlighting must respect the premium layout structure of the ESV API (such as multiline block-quotes and stanzas).
-- **Frictionless UI Controls**: Settings windows should not close expanded details blocks upon refreshing.
+- **Clean and Accurate Highlights**: Visual highlights should target exactly and only the text matching the specified verse number. In nested structures, children of different verses must not be colored, and double background overlays must be avoided.
 
 ## Design Decisions
-- **Persistent Underline Removal**: Removed the `border-bottom` underline from `.verse-inline.active-verse` in `styles.css`. Active verses now rely on temporary, fading amber background highlights.
-- **Multi-Line Quote/Stanza Highlight**: Refactored the highlight logic in `navigateToPassage` (`BibleView.ts`) to query for all DOM elements matching the ESV API coordinate ID prefix (e.g., `[id^="p40015008"]` or `[id^="v40015008"]`). This highlights all lines of a poetic quote together, rather than just the first line.
-- **Persist Details Element State**: Stored the toggled states `premiumDetailsOpen` and `autoExpandDetailsOpen` inside the `BibleSidecarSettingsTab` component. Listening to `toggle` events and restoring `open` attributes on re-render prevents details panels from collapsing when users click "Connect" or type input.
+- **Filter Out Different Nested Verses (Rule 1)**: In `navigateToPassage` (`BibleView.ts`), if a coordinate-matched element contains a descendant that belongs to a different verse (due to browser DOM auto-nesting on unclosed spans in Crossway's HTML), we skip highlighting that parent. Instead, we recursively target its immediate child nodes and highlight only those that do not belong to the different verse.
+- **Prevent Double Highlights (Rule 2)**: If an element is a descendant of another element already highlighted as active for the same verse, we skip applying `.active-verse` to it to prevent overlapping background overlays.

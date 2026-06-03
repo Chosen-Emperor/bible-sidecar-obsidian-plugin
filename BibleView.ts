@@ -282,15 +282,63 @@ export class BibleView extends ItemView {
 				const verseStr = String(v).padStart(3, "0");
 				const idPrefix = bookPrefix + verseStr;
 				const query = `[id^="p${idPrefix}"], [id^="v${idPrefix}"]`;
-				const matchedEls = container.querySelectorAll(query);
+				const matchedEls = Array.from(container.querySelectorAll(query)) as HTMLElement[];
 				
 				if (matchedEls.length > 0) {
 					matchedForV = true;
 					matchedEls.forEach((el: HTMLElement) => {
-						el.classList.add("active-verse");
 						if (v < minVerse && !firstScrollEl) {
 							minVerse = v;
 							firstScrollEl = el;
+						}
+
+						const hasDifferentVerseDescendant = Array.from(el.querySelectorAll('[id^="p"], [id^="v"]')).some((desc: HTMLElement) => {
+							const descId = desc.id || "";
+							const descPrefixMatch = descId.match(/^[pv](\d{8})/);
+							if (descPrefixMatch) {
+								const descPrefix = descPrefixMatch[1];
+								return descPrefix !== idPrefix;
+							}
+							return false;
+						});
+
+						if (hasDifferentVerseDescendant) {
+							// Highlight immediate child nodes that don't belong/contain different verses
+							Array.from(el.childNodes).forEach((child: Node) => {
+								if (child instanceof HTMLElement) {
+									const childId = child.id || "";
+									const childPrefixMatch = childId.match(/^[pv](\d{8})/);
+									const isDifferent = childPrefixMatch && childPrefixMatch[1] !== idPrefix;
+									const containsDifferent = Array.from(child.querySelectorAll('[id^="p"], [id^="v"]')).some((desc: HTMLElement) => {
+										const descId = desc.id || "";
+										const descPrefixMatch = descId.match(/^[pv](\d{8})/);
+										return descPrefixMatch && descPrefixMatch[1] !== idPrefix;
+									});
+									
+									if (!isDifferent && !containsDifferent) {
+										child.classList.add("active-verse");
+									}
+								} else if (child.nodeType === Node.TEXT_NODE && child.textContent?.trim()) {
+									const span = document.createElement("span");
+									span.className = "active-verse";
+									child.parentNode?.insertBefore(span, child);
+									span.appendChild(child);
+								}
+							});
+						} else {
+							// Avoid double highlighting if any ancestor is already active-verse
+							let ancestorIsHighlighted = false;
+							let p = el.parentElement;
+							while (p && p !== container) {
+								if (p.classList.contains("active-verse")) {
+									ancestorIsHighlighted = true;
+									break;
+								}
+								p = p.parentElement;
+							}
+							if (!ancestorIsHighlighted) {
+								el.classList.add("active-verse");
+							}
 						}
 					});
 				}
