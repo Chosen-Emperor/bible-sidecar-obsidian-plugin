@@ -14,3 +14,9 @@ This document outlines the core architectural and design guidelines of the Bible
 
 ## 3. HTML Parsing & Text Extraction
 - When parsing scripture from external APIs (like Crossway ESV or API.Bible), the parser must robustly handle nested DOM structures (such as verse number spans wrapped inside outer verse spans) to ensure no verse text is lost.
+
+## 4. Testing Architecture & Agent Guidelines
+- **Strict Separation of Concerns**: Core business logic, range expansion algorithms, text formatting, cache manipulation structures, and search filtering must be implemented as pure, exportable functions in [utils.ts](file:///c:/Users/rayni/Documents/bible-sidecar-plus/utils.ts) (or pure modules). They must not be tightly coupled to Obsidian subclasses (`Plugin`, `ItemView`) or browser-specific objects (`DOMParser`, `document`).
+- **No Test Simulations (Anti-Pattern Guard)**: Future agents must *never* copy-paste, duplicate, or simulate production code locally within test runners (e.g., [run-tests.ts](file:///c:/Users/rayni/Documents/bible-sidecar-plus/run-tests.ts)). If a feature requires testing, its pure logic must be extracted from production classes, exported, and imported directly into the test suite. Testing local simulation replicas is strictly prohibited.
+- **Thorough Test Coverage**: All utility engines must have corresponding assertion blocks in the unit test suite.
+- **Network Isolation in Unit Tests**: Unit tests must execute quickly and without external network dependencies. For checking third-party schema drifts or live responses, leverage the release-gated [run-api-tests.ts](file:///c:/Users/rayni/Documents/bible-sidecar-plus/run-api-tests.ts) suite separately.
