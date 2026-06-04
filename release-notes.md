@@ -1,24 +1,29 @@
-# Release Notes - v1.3.13
+# Release Notes - v1.3.14
 
-This release introduces major UI polish, parsing corrections, robust offline handling, and navigation UX improvements:
+This release fixes study note indicators and hardens the annotation highlight system with a refactored state model and expanded test coverage.
 
-## Key Changes
-1. **Core Parser Fixes**:
-   * Resolved a critical issue where API.Bible translation texts under nested `.verse-span` structures were being extracted as blank. Added robust parent/sibling traversal to ensure 100% compliance across all 240+ translations.
+## Bug Fixes
 
-2. **Scroll Snapping & Masking**:
-   * Added in-memory scroll position caching for the book selector and chapter grid panels.
-   * Restoring the scroll position uses instant snapping combined with temporary visual masking (opacity: 0) to hide screen jumps or visual flickers during navigation.
+### Study Note Indicator Now Appears Immediately
+- Fixed a critical bug in `showNotePrompt` where the 📝 note indicator would only appear after a *second* highlight action rather than immediately upon saving a note.
+- **Root cause**: The NoteModal submit callback referenced an undefined variable (`verseEl` instead of `verseElOrEls`), causing the redraw call to silently fail via `.catch(() => {})`.
+- **Fix**: Removed the erroneous `applyHighlight` call and replaced it with a direct `saveSettings()` → `applySavedHighlights()` flow — consistent with the rest of the annotation pipeline.
 
-3. **Testament Collapse Memory**:
-   * Added session persistence for Old Testament and New Testament header collapse/expand states.
-   * Grids automatically expand during searches and seamlessly restore your preferred collapsed state when the search is cleared.
+## Refactoring & Architecture
 
-4. **Dynamic Offline Mode & Glow Accents**:
-   * Added popup/popout-specific event listeners for online/offline changes to support multiple panels/windows.
-   * Added dynamic offline status correction based on actual request success.
-   * Added a premium hybrid visual state: cached books feature a subtle accent border glow when online, while online-only resources are dimmed when offline.
+### Unified Annotation State Model
+- Extracted annotation mutation logic from `BibleView.ts` into a pure `updateAnnotationsData()` function in `utils.ts`, making it independently testable.
+- `applyHighlight` now acts as a clean state mutator: update data → save → full DOM repaint via `applySavedHighlights`. No more conflicting parallel DOM writes.
+- Eliminated a double-write pattern in `showNotePrompt` that manually mutated `annotationsData` before calling `applyHighlight` (which would overwrite the same key a second time).
 
-5. **Navigation & Double-Click Guards**:
-   * Added direct back button navigation: `Verses -> Chapters -> Books`.
-   * Added double-click guard controls to prevent duplicate async fetch requests when spamming click targets.
+## Testing
+
+### Expanded Unit Test Suite
+- Added 19 unit tests in `run-tests.ts` covering highlight and note state mutations:
+  - Adding/replacing/clearing highlights on single and range verses
+  - Note preservation across highlight color changes
+  - Array annotation handling (multi-phrase highlights)
+  - Edge cases: empty notes, null colors, overlapping ranges
+
+### API Compliance Tests
+- Added `run-api-tests.ts` with 227 test cases validating verse fetch and parsing across API.Bible translations (run at release time via `npm run test:api`).
