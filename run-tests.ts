@@ -7,7 +7,16 @@ import {
     convertToNumber,
     formatAutoExpandText,
     compileCopyMessage,
-    compileAutoExpandOutput
+    compileAutoExpandOutput,
+    getBookIdFromName,
+    isNavigationAllowedOffline,
+    calculateDownloadProportion,
+    isOldTestament,
+    getBookDisplayName,
+    expandRange,
+    parseProtocolParams,
+    updateLocalCacheData,
+    searchBibleLocalData
 } from "./utils";
 
 // Colors for beautiful CLI output
@@ -485,21 +494,7 @@ function runTestSuite() {
         "Null localData should report 0 cache ratio"
     );
 
-    // Simulation of Offline Navigation block guard
-    const isNavigationAllowedOffline = (
-        isOfflineState: boolean,
-        localData: any,
-        bookId: number,
-        chapterNumber: number
-    ) => {
-        if (!isOfflineState) return true;
-        const isChapterCached = localData && (
-            localData.apiType === "bolls" ||
-            (localData.passages && localData.passages[bookId] && localData.passages[bookId][chapterNumber])
-        );
-        return !!isChapterCached;
-    };
-
+    // Testing Offline Navigation block guard
     assert(
         isNavigationAllowedOffline(false, null, 1, 10) === true,
         "Navigation is always allowed when online, even if uncached"
@@ -512,6 +507,91 @@ function runTestSuite() {
         isNavigationAllowedOffline(true, apiBibleLocalData, 1, 10) === false,
         "Navigation is blocked offline if the specific chapter is NOT cached"
     );
+    console.log();
+
+    // ----------------------------------------------------
+    // TEST SECTION 9: BOOK ID RESOLUTION FROM NAME
+    // ----------------------------------------------------
+    console.log(`${colors.yellow}${colors.bold}[Test Section 9: Book ID Resolution]${colors.reset}`);
+
+    assert(getBookIdFromName("Genesis") === 1, "Genesis book ID should be 1");
+    assert(getBookIdFromName("1 Samuel") === 9, "1 Samuel book ID should be 9");
+    assert(getBookIdFromName("john") === 43, "Case-insensitive john book ID should be 43");
+    assert(getBookIdFromName("InvalidBook") === 1, "Invalid book name falls back to Genesis (1)");
+    console.log();
+
+    // ----------------------------------------------------
+    // TEST SECTION 10: BOOK ABBREVIATION & CATEGORIZATION
+    // ----------------------------------------------------
+    console.log(`${colors.yellow}${colors.bold}[Test Section 10: Book Abbreviation & Categorization]${colors.reset}`);
+
+    const bookMatthew = { bookid: 40, name: "Matthew" };
+    assert(getBookDisplayName(bookMatthew, false) === "Matthew", "Matthew name is not abbreviated when setting is false");
+    assert(getBookDisplayName(bookMatthew, true) === "MAT", "Matthew name is abbreviated to MAT when setting is true");
+
+    // Testament Categorization boundary test (Old < 40, New >= 40)
+    assert(isOldTestament(39) === true, "Malachi (39) is part of the Old Testament");
+    assert(isOldTestament(40) === false, "Matthew (40) is NOT part of the Old Testament (New Testament)");
+    console.log();
+
+    // ----------------------------------------------------
+    // TEST SECTION 11: SELECTION RANGE EXPANSION & PARSING
+    // ----------------------------------------------------
+    console.log(`${colors.yellow}${colors.bold}[Test Section 11: Range Expansion & Protocol Parsing]${colors.reset}`);
+
+    // Testing range expansion and protocol params parsing
+    assert(expandRange("16", undefined) === "16", "Single verse range does not expand");
+    assert(expandRange("16", "18") === "16,17,18", "Consecutive range expands to comma-separated list");
+
+    const parsed1 = parseProtocolParams({ book: "John", chapter: "3", verse: "16" });
+    assert(parsed1.book === "John" && parsed1.chapter === 3 && parsed1.verse === 16 && parsed1.endVerse === undefined, "Standard single verse params parsed correctly");
+
+    const parsed2 = parseProtocolParams({ book: "John", chapter: "3", verse: "16,17,18", endverse: "18" });
+    assert(parsed2.verse === "16,17,18" && parsed2.endVerse === 18, "Range list verse parameter and fallback endverse parsed correctly");
+    console.log();
+
+    // ----------------------------------------------------
+    // TEST SECTION 12: LOCAL CACHE UPDATES & STORAGE
+    // ----------------------------------------------------
+    console.log(`${colors.yellow}${colors.bold}[Test Section 12: Local Cache simulated updates]${colors.reset}`);
+
+    let cacheDb: any = null;
+    cacheDb = updateLocalCacheData(cacheDb, "ESV", 43, 3, "John", { isEsvApi: true, html: "<p>John 3</p>" }, "esv");
+    assert(cacheDb !== null, "Simulated local data initialized on first cache write");
+    assert(cacheDb.books.length === 1 && cacheDb.books[0].name === "John", "Book list contains John after caching");
+    assert(cacheDb.passages[43][3].html === "<p>John 3</p>", "Chapter passage retrieved correctly from simulated cache");
+
+    // Add a second book (Genesis - ID 1) to verify sorting
+    cacheDb = updateLocalCacheData(cacheDb, "ESV", 1, 1, "Genesis", { isEsvApi: true, html: "<p>Genesis 1</p>" }, "esv");
+    assert(cacheDb.books.length === 2, "Cache DB contains 2 books");
+    assert(cacheDb.books[0].name === "Genesis", "Books list is correctly sorted with Genesis (ID 1) first");
+    console.log();
+
+    // ----------------------------------------------------
+    // TEST SECTION 13: OFFLINE FULL-TEXT SEARCH
+    // ----------------------------------------------------
+    console.log(`${colors.yellow}${colors.bold}[Test Section 13: Offline Full-Text Search Engine]${colors.reset}`);
+
+    const mockSearchDb = {
+        books: [{ bookid: 43, name: "John" }],
+        passages: {
+            "43": {
+                "3": [
+                    { verse: "16", text: "For God so loved the world, that he gave his only Son" },
+                    { verse: "17", text: "For God did not send his Son into the world to condemn the world" }
+                ]
+            }
+        }
+    };
+
+    const searchRes1 = searchBibleLocalData("loved world", mockSearchDb);
+    assert(searchRes1.length === 1 && searchRes1[0].verse === "16", "Searching 'loved world' matches John 3:16");
+
+    const searchRes2 = searchBibleLocalData("Son world", mockSearchDb);
+    assert(searchRes2.length === 2, "Searching 'Son world' matches both John 3:16 and 3:17");
+
+    const searchRes3 = searchBibleLocalData("nonexistent", mockSearchDb);
+    assert(searchRes3.length === 0, "Searching non-existent query returns 0 results");
     console.log();
 }
 

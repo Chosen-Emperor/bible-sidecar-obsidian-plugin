@@ -1,5 +1,5 @@
 import { ItemView, WorkspaceLeaf, requestUrl, Notice, Platform, setIcon } from "obsidian";
-import { convertToSuperscript, convertToNumber, compileCopyMessage, copyToClipboard } from "./utils";
+import { convertToSuperscript, convertToNumber, compileCopyMessage, copyToClipboard, BIBLE_BOOK_IDS, isNavigationAllowedOffline, calculateDownloadProportion, isOldTestament, getBookDisplayName, searchBibleLocalData } from "./utils";
 
 function colorGospelQuotesRedInDOM(node: Node, state = { inQuote: false }) {
 	if (node.nodeType === Node.TEXT_NODE) {
@@ -132,16 +132,6 @@ const DEFAULT_SETTINGS: Partial<BibleSidecarSettings> = {
 	abbreviateBookNames: false,
 };
 
-export const BIBLE_BOOK_IDS = [
-	"GEN", "EXO", "LEV", "NUM", "DEU", "JOS", "JDG", "RUT", "1SA", "2SA",
-	"1KI", "2KI", "1CH", "2CH", "EZR", "NEH", "EST", "JOB", "PSA", "PRO",
-	"ECC", "SNG", "ISA", "JER", "LAM", "EZK", "DAN", "HOS", "JOL", "AMO",
-	"OBD", "JON", "MIC", "NAM", "HAB", "ZEP", "HAG", "ZEC", "MAL",
-	"MAT", "MRK", "LUK", "JHN", "ACT", "ROM", "1CO", "2CO", "GAL", "EPH",
-	"PHP", "COL", "1TH", "2TH", "1TI", "2TI", "TIT", "PHM", "HEB", "JAS",
-	"1PE", "2PE", "1JN", "2JN", "3JN", "JUD", "REV"
-];
-
 export class BibleView extends ItemView {
 	settings: BibleSidecarSettings;
 	plugin: any;
@@ -230,7 +220,11 @@ export class BibleView extends ItemView {
 			else if (iconId === "book-open") el.setText("📖");
 			else if (iconId === "chevron-left") el.setText("◀");
 			else if (iconId === "chevron-right") el.setText("▶");
+			else if (iconId === "chevron-down") el.setText("▼");
+			else if (iconId === "chevron-up") el.setText("▲");
 			else if (iconId === "copy") el.setText("📋");
+			else if (iconId === "wifi-off") el.setText("🔌");
+			else if (iconId === "loader") el.setText("⏳");
 			return;
 		}
 
@@ -259,7 +253,11 @@ export class BibleView extends ItemView {
 			else if (iconId === "book-open") el.setText("📖");
 			else if (iconId === "chevron-left") el.setText("◀");
 			else if (iconId === "chevron-right") el.setText("▶");
+			else if (iconId === "chevron-down") el.setText("▼");
+			else if (iconId === "chevron-up") el.setText("▲");
 			else if (iconId === "copy") el.setText("📋");
+			else if (iconId === "wifi-off") el.setText("🔌");
+			else if (iconId === "loader") el.setText("⏳");
 		}
 	}
 
@@ -322,17 +320,11 @@ export class BibleView extends ItemView {
 		if (this.plugin?.writeLog) await this.plugin.writeLog(foundMsg);
 
 		// Block navigation to uncached chapters when offline
-		if (this.isOfflineState) {
-			const localData = await this.plugin.readLocalTranslation(this.settings.bibleVersion);
-			const isChapterCached = localData && (
-				localData.apiType === "bolls" ||
-				(localData.passages && localData.passages[targetBook.bookid] && localData.passages[targetBook.bookid][chapterNumber])
-			);
-			if (!isChapterCached) {
-				new Notice(`🔌 Chapter offline: ${targetBook.name} ${chapterNumber} is not cached for offline use.`);
-				this.logDebug(`Navigation blocked: ${targetBook.name} ${chapterNumber} is not cached and view is offline.`);
-				return;
-			}
+		const localData = await this.plugin.readLocalTranslation(this.settings.bibleVersion);
+		if (!isNavigationAllowedOffline(this.isOfflineState, localData, targetBook.bookid, chapterNumber)) {
+			new Notice(`🔌 Chapter offline: ${targetBook.name} ${chapterNumber} is not cached for offline use.`);
+			this.logDebug(`Navigation blocked: ${targetBook.name} ${chapterNumber} is not cached and view is offline.`);
+			return;
 		}
 		
 		const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
@@ -909,8 +901,8 @@ export class BibleView extends ItemView {
 		// 3. Render book cards into the correct section
 		const bookElements: { book: typeof books[0]; el: HTMLElement }[] = [];
 
-		const oldTestament = books.filter(b => b.bookid < 40);
-		const newTestament = books.filter(b => b.bookid >= 40);
+		const oldTestament = books.filter(b => isOldTestament(b.bookid));
+		const newTestament = books.filter(b => !isOldTestament(b.bookid));
 
 		const addCards = (list: typeof books, grid: HTMLElement) => {
 			for (const book of list) {
@@ -919,16 +911,7 @@ export class BibleView extends ItemView {
 					(localData.passages && localData.passages[book.bookid] && Object.keys(localData.passages[book.bookid]).length > 0)
 				);
 
-				let downloadProportion = 0;
-				if (localData) {
-					if (localData.apiType === "bolls") {
-						downloadProportion = 1.0;
-					} else if (localData.passages && localData.passages[book.bookid]) {
-						const cachedChaptersCount = Object.keys(localData.passages[book.bookid]).length;
-						const totalChapters = book.chapters || 1;
-						downloadProportion = Math.min(cachedChaptersCount / totalChapters, 1.0);
-					}
-				}
+				let downloadProportion = calculateDownloadProportion(localData, book);
 
 				const card = grid.createEl("button", {
 					cls: isBookCached ? "bible-book-card is-cached" : "bible-book-card",
@@ -936,9 +919,7 @@ export class BibleView extends ItemView {
 				});
 				card.style.setProperty("--download-proportion", downloadProportion.toString());
 				
-				const bookDisplayName = this.settings.abbreviateBookNames
-					? (BIBLE_BOOK_IDS[book.bookid - 1] || book.name)
-					: book.name;
+				const bookDisplayName = getBookDisplayName(book, this.settings.abbreviateBookNames);
 				card.createSpan({ text: bookDisplayName });
 				card.addEventListener("click", async () => {
 					this.saveCurrentScrollPosition();
@@ -963,7 +944,7 @@ export class BibleView extends ItemView {
 				                abbr.toLowerCase().includes(searchQuery.toLowerCase());
 				el.style.display = matches ? "flex" : "none";
 				if (matches) {
-					if (book.bookid < 40) oldVisible++;
+					if (isOldTestament(book.bookid)) oldVisible++;
 					else newVisible++;
 				}
 			});
@@ -1819,105 +1800,54 @@ export class BibleView extends ItemView {
 			return;
 		}
 
-		const results: { bookName: string; bookid: number; chapter: number; verse: string; text: string }[] = [];
-		const searchTerms = query.toLowerCase().split(/\s+/).filter(t => t);
-
-		const passages = localData.passages;
-		const books = localData.books;
-
-		for (const book of books) {
-			const bookIdStr = book.bookid.toString();
-			const chapters = passages[bookIdStr];
-			if (!chapters) continue;
-
-			for (const chStr in chapters) {
-				const chapterNum = parseInt(chStr);
-				const cachedChapter = chapters[chStr];
-				if (!cachedChapter) continue;
-
-				if (cachedChapter.isEsvApi || cachedChapter.isApiBible) {
-					const parser = new DOMParser();
-					const doc = parser.parseFromString(cachedChapter.html, "text/html");
-					
-					if (cachedChapter.isEsvApi) {
-						doc.querySelectorAll(".extra_text, .audio, .copyright, .mp3link").forEach(el => el.remove());
-						const spans = doc.querySelectorAll("b.verse-num, b.chapter-num, span.chapter-num");
-						spans.forEach((span) => {
-							let verseNum = parseInt(span.textContent || "0");
-							if (span.classList.contains("chapter-num") || (span.tagName.toLowerCase() === "span" && span.classList.contains("chapter-num"))) {
-								verseNum = 1;
-							}
-							if (verseNum === 0) return;
-							
-							let text = "";
-							let next = span.nextSibling;
-							while (next && !(next instanceof Element && (next.classList.contains("verse-num") || next.classList.contains("chapter-num") || (next.tagName.toLowerCase() === "b" && next.classList.contains("verse-num"))))) {
-								text += next.textContent || "";
-								next = next.nextSibling;
-							}
-							const cleanText = text.replace(/<[^>]*>?/gm, '').trim();
-							const cleanLower = cleanText.toLowerCase();
-							
-							if (searchTerms.every(term => cleanLower.includes(term))) {
-								results.push({
-									bookName: book.name,
-									bookid: book.bookid,
-									chapter: chapterNum,
-									verse: verseNum.toString(),
-									text: cleanText
-								});
-							}
-						});
-					} else {
-						// API.Bible
-						const spans = doc.querySelectorAll("span.v");
-						spans.forEach((span) => {
-							const verseNum = parseInt(span.getAttribute("data-number") || span.textContent || "0");
-							if (verseNum === 0) return;
-							
-							let text = "";
-							let next = span.nextSibling;
-							if (!next && span.parentElement && span.parentElement.classList.contains("verse-span")) {
-								next = span.parentElement.nextSibling;
-							}
-							while (next && !(next instanceof Element && (next.classList.contains("v") || next.querySelector(".v")))) {
-								text += next.textContent || "";
-								next = next.nextSibling;
-							}
-							const cleanText = text.replace(/<[^>]*>?/gm, '').trim();
-							const cleanLower = cleanText.toLowerCase();
-							
-							if (searchTerms.every(term => cleanLower.includes(term))) {
-								results.push({
-									bookName: book.name,
-									bookid: book.bookid,
-									chapter: chapterNum,
-									verse: verseNum.toString(),
-									text: cleanText
-								});
-							}
-						});
-					}
-				} else {
-					for (const verse of cachedChapter) {
-						const verseText = (verse.text || "").replace(/<[^>]*>?/gm, '').toLowerCase();
-						const matchesAll = searchTerms.every(term => verseText.includes(term));
-						
-						if (matchesAll) {
-							results.push({
-								bookName: book.name,
-								bookid: book.bookid,
-								chapter: chapterNum,
-								verse: verse.verse,
-								text: verse.text.replace(/<[^>]*>?/gm, '').trim()
-							});
-						}
-					}
+		const esvHtmlParser = (html: string): { verse: number; text: string }[] => {
+			const parser = new DOMParser();
+			const doc = parser.parseFromString(html, "text/html");
+			doc.querySelectorAll(".extra_text, .audio, .copyright, .mp3link").forEach(el => el.remove());
+			const spans = doc.querySelectorAll("b.verse-num, b.chapter-num, span.chapter-num");
+			const parsed: { verse: number; text: string }[] = [];
+			spans.forEach((span) => {
+				let verseNum = parseInt(span.textContent || "0");
+				if (span.classList.contains("chapter-num") || (span.tagName.toLowerCase() === "span" && span.classList.contains("chapter-num"))) {
+					verseNum = 1;
 				}
-				if (results.length >= 150) break;
-			}
-			if (results.length >= 150) break;
-		}
+				if (verseNum === 0) return;
+				
+				let text = "";
+				let next = span.nextSibling;
+				while (next && !(next instanceof Element && (next.classList.contains("verse-num") || next.classList.contains("chapter-num") || (next.tagName.toLowerCase() === "b" && next.classList.contains("verse-num"))))) {
+					text += next.textContent || "";
+					next = next.nextSibling;
+				}
+				parsed.push({ verse: verseNum, text });
+			});
+			return parsed;
+		};
+
+		const apiBibleHtmlParser = (html: string): { verse: number; text: string }[] => {
+			const parser = new DOMParser();
+			const doc = parser.parseFromString(html, "text/html");
+			const spans = doc.querySelectorAll("span.v");
+			const parsed: { verse: number; text: string }[] = [];
+			spans.forEach((span) => {
+				const verseNum = parseInt(span.getAttribute("data-number") || span.textContent || "0");
+				if (verseNum === 0) return;
+				
+				let text = "";
+				let next = span.nextSibling;
+				if (!next && span.parentElement && span.parentElement.classList.contains("verse-span")) {
+					next = span.parentElement.nextSibling;
+				}
+				while (next && !(next instanceof Element && (next.classList.contains("v") || next.querySelector(".v")))) {
+					text += next.textContent || "";
+					next = next.nextSibling;
+				}
+				parsed.push({ verse: verseNum, text });
+			});
+			return parsed;
+		};
+
+		const results = searchBibleLocalData(query, localData, esvHtmlParser, apiBibleHtmlParser);
 
 		searchResultsEl.empty();
 

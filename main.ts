@@ -10,7 +10,12 @@ import {
 	convertToSuperscript,
 	formatAutoExpandText,
 	compileAutoExpandOutput,
-	copyToClipboard
+	copyToClipboard,
+	BIBLE_BOOK_IDS,
+	getBookIdFromName,
+	expandRange,
+	parseProtocolParams,
+	updateLocalCacheData
 } from "./utils";
 
 interface BibleSidecarSettings {
@@ -179,16 +184,6 @@ export default class BibleSidecarPlugin extends Plugin {
 			apiType = "apibible";
 		}
 
-		const BIBLE_BOOK_IDS = [
-			"GEN", "EXO", "LEV", "NUM", "DEU", "JOS", "JDG", "RUT", "1SA", "2SA",
-			"1KI", "2KI", "1CH", "2CH", "EZR", "NEH", "EST", "JOB", "PSA", "PRO",
-			"ECC", "SNG", "ISA", "JER", "LAM", "EZK", "DAN", "HOS", "JOL", "AMO",
-			"OBD", "JON", "MIC", "NAM", "HAB", "ZEP", "HAG", "ZEC", "MAL",
-			"MAT", "MRK", "LUK", "JHN", "ACT", "ROM", "1CO", "2CO", "GAL", "EPH",
-			"PHP", "COL", "1TH", "2TH", "1TI", "2TI", "TIT", "PHM", "HEB", "JAS",
-			"1PE", "2PE", "1JN", "2JN", "3JN", "JUD", "REV"
-		];
-
 		const STANDARD_BOOK_CHAPTERS: Record<string, number> = {
 			"GEN": 50, "EXO": 40, "LEV": 27, "NUM": 36, "DEU": 34, "JOS": 24, "JDG": 21, "RUT": 4, "1SA": 31, "2SA": 24,
 			"1KI": 22, "2KI": 25, "1CH": 29, "2CH": 36, "EZR": 10, "NEH": 13, "EST": 10, "JOB": 42, "PSA": 150, "PRO": 31,
@@ -336,34 +331,7 @@ export default class BibleSidecarPlugin extends Plugin {
 	}
 
 	getBookIdFromName(bookName: string): number {
-		const BIBLE_BOOK_IDS = [
-			"GEN", "EXO", "LEV", "NUM", "DEU", "JOS", "JDG", "RUT", "1SA", "2SA",
-			"1KI", "2KI", "1CH", "2CH", "EZR", "NEH", "EST", "JOB", "PSA", "PRO",
-			"ECC", "SNG", "ISA", "JER", "LAM", "EZK", "DAN", "HOS", "JOL", "AMO",
-			"OBD", "JON", "MIC", "NAM", "HAB", "ZEP", "HAG", "ZEC", "MAL",
-			"MAT", "MRK", "LUK", "JHN", "ACT", "ROM", "1CO", "2CO", "GAL", "EPH",
-			"PHP", "COL", "1TH", "2TH", "1TI", "2TI", "TIT", "PHM", "HEB", "JAS",
-			"1PE", "2PE", "1JN", "2JN", "3JN", "JUD", "REV"
-		];
-		const BIBLE_BOOK_MAP: Record<string, string> = {
-			"genesis": "GEN", "exodus": "EXO", "leviticus": "LEV", "numbers": "NUM", "deuteronomy": "DEU",
-			"joshua": "JOS", "judges": "JDG", "ruth": "RUT", "1 samuel": "1SA", "2 samuel": "2SA",
-			"1 kings": "1KI", "2 kings": "2KI", "1 chronicles": "1CH", "2 chronicles": "2CH",
-			"ezra": "EZR", "nehemiah": "NEH", "esther": "EST", "job": "JOB",
-			"psalms": "PSA", "psalm": "PSA", "proverbs": "PRO", "ecclesiastes": "ECC", "song of solomon": "SNG",
-			"isaiah": "ISA", "jeremiah": "JER", "lamentations": "LAM", "ezekiel": "EZK", "daniel": "DAN",
-			"hosea": "HOS", "joel": "JOL", "amos": "AMO", "obadiah": "OBD", "jonah": "JON", "micah": "MIC",
-			"nahum": "NAM", "habakkuk": "HAB", "zephaniah": "ZEP", "haggai": "HAG", "zechariah": "ZEC",
-			"malachi": "MAL", "matthew": "MAT", "mark": "MRK", "luke": "LUK", "john": "JHN",
-			"acts": "ACT", "romans": "ROM", "1 corinthians": "1CO", "2 corinthians": "2CO", "galatians": "GAL",
-			"ephesians": "EPH", "philippians": "PHP", "colossians": "COL", "1 thessalonians": "1TH",
-			"2 thessalonians": "2TH", "1 timothy": "1TI", "2 timothy": "2TI", "titus": "TIT",
-			"philemon": "PHM", "hebrews": "HEB", "james": "JAS", "1 peter": "1PE", "2 peter": "2PE",
-			"1 john": "1JN", "2 john": "2JN", "3 john": "3JN", "jude": "JUD", "revelation": "REV"
-		};
-		const code = BIBLE_BOOK_MAP[bookName.toLowerCase()] || bookName.toUpperCase().substring(0, 3);
-		const idx = BIBLE_BOOK_IDS.indexOf(code);
-		return idx !== -1 ? idx + 1 : 1;
+		return getBookIdFromName(bookName);
 	}
 
 	async cachePassageLocally(version: string, bookid: number, chapter: number, bookName: string, content: any): Promise<void> {
@@ -375,34 +343,15 @@ export default class BibleSidecarPlugin extends Plugin {
 				await this.app.vault.adapter.mkdir(dir);
 			}
 
-			let localData: any = {
-				version,
-				books: [],
-				passages: {},
-				apiType: this.settings.esvApiEnabled ? "esv" : (this.settings.apiBibleEnabled ? "apibible" : "bolls")
-			};
-
+			let localData: any = null;
 			const fileExists = await this.app.vault.adapter.exists(filePath);
 			if (fileExists) {
 				const contentStr = await this.app.vault.adapter.read(filePath);
 				localData = JSON.parse(contentStr);
 			}
 
-			// Add book list entry if missing
-			if (!localData.books.find((b: any) => b.bookid === bookid)) {
-				localData.books.push({
-					bookid,
-					name: bookName,
-					chapters: 150
-				});
-				localData.books.sort((a: any, b: any) => a.bookid - b.bookid);
-			}
-
-			if (!localData.passages[bookid]) {
-				localData.passages[bookid] = {};
-			}
-
-			localData.passages[bookid][chapter] = content;
+			const apiType = this.settings.esvApiEnabled ? "esv" : (this.settings.apiBibleEnabled ? "apibible" : "bolls");
+			localData = updateLocalCacheData(localData, version, bookid, chapter, bookName, content, apiType);
 
 			await this.app.vault.adapter.write(filePath, JSON.stringify(localData));
 		} catch (e) {
@@ -479,16 +428,7 @@ export default class BibleSidecarPlugin extends Plugin {
 					const endVerse = match[4]; // This captures the end of the range if it exists
 					
 					const rangeStr = endVerse ? `${startVerse}-${endVerse}` : startVerse;
-					let verseVal = startVerse;
-					if (endVerse && !isNaN(parseInt(startVerse)) && !isNaN(parseInt(endVerse))) {
-						const start = parseInt(startVerse);
-						const end = parseInt(endVerse);
-						const vList = [];
-						for (let v = start; v <= end; v++) {
-							vList.push(v);
-						}
-						verseVal = vList.join(",");
-					}
+					const verseVal = expandRange(startVerse, endVerse);
 					const uri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${chapter}&verse=${verseVal}`;
 					
 					let referenceText = "";
@@ -508,16 +448,7 @@ export default class BibleSidecarPlugin extends Plugin {
 					const startVerse = verseMatch[1];
 					const endVerse = verseMatch[2];
 					const rangeStr = endVerse ? startVerse + "-" + endVerse : startVerse;
-					let verseVal = startVerse;
-					if (endVerse && !isNaN(parseInt(startVerse)) && !isNaN(parseInt(endVerse))) {
-						const start = parseInt(startVerse);
-						const end = parseInt(endVerse);
-						const vList = [];
-						for (let v = start; v <= end; v++) {
-							vList.push(v);
-						}
-						verseVal = vList.join(",");
-					}
+					const verseVal = expandRange(startVerse, endVerse);
 					const uri = "obsidian://bible?book=" + encodeURIComponent(context.book) + "&chapter=" + context.chapter + "&verse=" + verseVal;
 					const displayVerse = selection.startsWith("V") ? "V" + rangeStr : "v" + rangeStr;
 					const referenceText = "[" + displayVerse + "](" + uri + ")";
@@ -778,15 +709,12 @@ export default class BibleSidecarPlugin extends Plugin {
 			if (leaf) {
 				this.app.workspace.revealLeaf(leaf);
 				if (this.view && typeof (this.view as any).navigateToPassage === "function") {
-					const endVerse = params.endVerse || params.endverse;
-					const verseParam = (params.verse && (params.verse.includes(",") || params.verse.includes("-")))
-						? params.verse
-						: parseInt(params.verse);
+					const parsed = parseProtocolParams(params);
 					await (this.view as any).navigateToPassage(
-						params.book,
-						parseInt(params.chapter),
-						verseParam,
-						endVerse ? parseInt(endVerse) : undefined
+						parsed.book,
+						parsed.chapter,
+						parsed.verse,
+						parsed.endVerse
 					);
 				}
 			}

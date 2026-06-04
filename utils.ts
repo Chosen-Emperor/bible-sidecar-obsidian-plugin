@@ -312,3 +312,195 @@ export async function copyToClipboard(text: string): Promise<boolean> {
 	}
 }
 
+export const BIBLE_BOOK_IDS = [
+	"GEN", "EXO", "LEV", "NUM", "DEU", "JOS", "JDG", "RUT", "1SA", "2SA",
+	"1KI", "2KI", "1CH", "2CH", "EZR", "NEH", "EST", "JOB", "PSA", "PRO",
+	"ECC", "SNG", "ISA", "JER", "LAM", "EZK", "DAN", "HOS", "JOL", "AMO",
+	"OBD", "JON", "MIC", "NAM", "HAB", "ZEP", "HAG", "ZEC", "MAL",
+	"MAT", "MRK", "LUK", "JHN", "ACT", "ROM", "1CO", "2CO", "GAL", "EPH",
+	"PHP", "COL", "1TH", "2TH", "1TI", "2TI", "TIT", "PHM", "HEB", "JAS",
+	"1PE", "2PE", "1JN", "2JN", "3JN", "JUD", "REV"
+];
+
+export const BIBLE_BOOK_MAP: Record<string, string> = {
+	"genesis": "GEN", "exodus": "EXO", "leviticus": "LEV", "numbers": "NUM", "deuteronomy": "DEU",
+	"joshua": "JOS", "judges": "JDG", "ruth": "RUT", "1 samuel": "1SA", "2 samuel": "2SA",
+	"1 kings": "1KI", "2 kings": "2KI", "1 chronicles": "1CH", "2 chronicles": "2CH",
+	"ezra": "EZR", "nehemiah": "NEH", "esther": "EST", "job": "JOB",
+	"psalms": "PSA", "psalm": "PSA", "proverbs": "PRO", "ecclesiastes": "ECC", "song of solomon": "SNG",
+	"isaiah": "ISA", "jeremiah": "JER", "lamentations": "LAM", "ezekiel": "EZK", "daniel": "DAN",
+	"hosea": "HOS", "joel": "JOL", "amos": "AMO", "obadiah": "OBD", "jonah": "JON", "micah": "MIC",
+	"nahum": "NAM", "habakkuk": "HAB", "zephaniah": "ZEP", "haggai": "HAG", "zechariah": "ZEC",
+	"malachi": "MAL", "matthew": "MAT", "mark": "MRK", "luke": "LUK", "john": "JHN",
+	"acts": "ACT", "romans": "ROM", "1 corinthians": "1CO", "2 corinthians": "2CO", "galatians": "GAL",
+	"ephesians": "EPH", "philippians": "PHP", "colossians": "COL", "1 thessalonians": "1TH",
+	"2 thessalonians": "2TH", "1 timothy": "1TI", "2 timothy": "2TI", "titus": "TIT",
+	"philemon": "PHM", "hebrews": "HEB", "james": "JAS", "1 peter": "1PE", "2 peter": "2PE",
+	"1 john": "1JN", "2 john": "2JN", "3 john": "3JN", "jude": "JUD", "revelation": "REV"
+};
+
+export function getBookIdFromName(bookName: string): number {
+	const code = BIBLE_BOOK_MAP[bookName.toLowerCase()] || bookName.toUpperCase().substring(0, 3);
+	const idx = BIBLE_BOOK_IDS.indexOf(code);
+	return idx !== -1 ? idx + 1 : 1;
+}
+
+export function isNavigationAllowedOffline(
+	isOfflineState: boolean,
+	localData: any,
+	bookId: number,
+	chapterNumber: number
+): boolean {
+	if (!isOfflineState) return true;
+	const isChapterCached = localData && (
+		localData.apiType === "bolls" ||
+		(localData.passages && localData.passages[bookId] && localData.passages[bookId][chapterNumber])
+	);
+	return !!isChapterCached;
+}
+
+export function calculateDownloadProportion(
+	localData: any,
+	book: { bookid: number; chapters: number }
+): number {
+	if (!localData) return 0;
+	if (localData.apiType === "bolls") {
+		return 1.0;
+	} else if (localData.passages && localData.passages[book.bookid]) {
+		const cachedChaptersCount = Object.keys(localData.passages[book.bookid]).length;
+		const totalChapters = book.chapters || 1;
+		return Math.min(cachedChaptersCount / totalChapters, 1.0);
+	}
+	return 0;
+}
+
+export function isOldTestament(bookid: number): boolean {
+	return bookid < 40;
+}
+
+export function getBookDisplayName(book: { bookid: number; name: string }, abbreviate: boolean): string {
+	return abbreviate ? (BIBLE_BOOK_IDS[book.bookid - 1] || book.name) : book.name;
+}
+
+export function expandRange(startVerse: string, endVerse: string | undefined): string {
+	let verseVal = startVerse;
+	if (endVerse && !isNaN(parseInt(startVerse)) && !isNaN(parseInt(endVerse))) {
+		const start = parseInt(startVerse);
+		const end = parseInt(endVerse);
+		const vList = [];
+		for (let v = start; v <= end; v++) {
+			vList.push(v);
+		}
+		verseVal = vList.join(",");
+	}
+	return verseVal;
+}
+
+export function parseProtocolParams(params: any) {
+	const endVerse = params.endVerse || params.endverse;
+	const verseParam = (params.verse && (params.verse.includes(",") || params.verse.includes("-")))
+		? params.verse
+		: parseInt(params.verse);
+	return {
+		book: params.book,
+		chapter: parseInt(params.chapter),
+		verse: verseParam,
+		endVerse: endVerse ? parseInt(endVerse) : undefined
+	};
+}
+
+export function updateLocalCacheData(
+	localData: any,
+	version: string,
+	bookid: number,
+	chapter: number,
+	bookName: string,
+	content: any,
+	apiType: string
+): any {
+	if (!localData) {
+		localData = {
+			version,
+			books: [],
+			passages: {},
+			apiType
+		};
+	}
+	if (!localData.books.find((b: any) => b.bookid === bookid)) {
+		localData.books.push({
+			bookid,
+			name: bookName,
+			chapters: 150
+		});
+		localData.books.sort((a: any, b: any) => a.bookid - b.bookid);
+	}
+	if (!localData.passages[bookid]) {
+		localData.passages[bookid] = {};
+	}
+	localData.passages[bookid][chapter] = content;
+	return localData;
+}
+
+export function searchBibleLocalData(
+	query: string,
+	localData: any,
+	esvHtmlParser?: (html: string) => { verse: number; text: string }[],
+	apiBibleHtmlParser?: (html: string) => { verse: number; text: string }[]
+): { bookName: string; bookid: number; chapter: number; verse: string; text: string }[] {
+	if (!query || !localData) return [];
+	const results: { bookName: string; bookid: number; chapter: number; verse: string; text: string }[] = [];
+	const searchTerms = query.toLowerCase().split(/\s+/).filter(t => t);
+
+	const passages = localData.passages;
+	const books = localData.books;
+
+	for (const book of books) {
+		const bookIdStr = book.bookid.toString();
+		const chapters = passages[bookIdStr];
+		if (!chapters) continue;
+
+		for (const chStr in chapters) {
+			const chapterNum = parseInt(chStr);
+			const cachedChapter = chapters[chStr];
+			if (!cachedChapter) continue;
+
+			if (cachedChapter.isEsvApi || cachedChapter.isApiBible) {
+				const verses = cachedChapter.isEsvApi
+					? (esvHtmlParser ? esvHtmlParser(cachedChapter.html) : [])
+					: (apiBibleHtmlParser ? apiBibleHtmlParser(cachedChapter.html) : []);
+				for (const v of verses) {
+					const cleanText = v.text.replace(/<[^>]*>?/gm, '').trim();
+					const cleanLower = cleanText.toLowerCase();
+					if (searchTerms.every(term => cleanLower.includes(term))) {
+						results.push({
+							bookName: book.name,
+							bookid: book.bookid,
+							chapter: chapterNum,
+							verse: v.verse.toString(),
+							text: cleanText
+						});
+					}
+				}
+			} else {
+				for (const verse of cachedChapter) {
+					const verseText = (verse.text || "").replace(/<[^>]*>?/gm, '').toLowerCase();
+					const matchesAll = searchTerms.every(term => verseText.includes(term));
+					
+					if (matchesAll) {
+						results.push({
+							bookName: book.name,
+							bookid: book.bookid,
+							chapter: chapterNum,
+							verse: verse.verse,
+							text: verse.text.replace(/<[^>]*>?/gm, '').trim()
+						});
+					}
+				}
+			}
+			if (results.length >= 150) break;
+		}
+		if (results.length >= 150) break;
+	}
+	return results;
+}
+
