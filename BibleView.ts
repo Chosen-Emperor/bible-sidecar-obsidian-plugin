@@ -1,5 +1,5 @@
-import { ItemView, WorkspaceLeaf, requestUrl, Notice, Platform, setIcon } from "obsidian";
-import { convertToSuperscript, convertToNumber, compileCopyMessage, copyToClipboard, BIBLE_BOOK_IDS, isNavigationAllowedOffline, calculateDownloadProportion, isOldTestament, getBookDisplayName, searchBibleLocalData } from "./utils";
+import { ItemView, WorkspaceLeaf, requestUrl, Notice, Platform, setIcon, Modal, Setting, App } from "obsidian";
+import { convertToSuperscript, convertToNumber, compileCopyMessage, copyToClipboard, BIBLE_BOOK_IDS, isNavigationAllowedOffline, calculateDownloadProportion, isOldTestament, getBookDisplayName, searchBibleLocalData, updateAnnotationsData } from "./utils";
 
 function colorGospelQuotesRedInDOM(node: Node, state = { inQuote: false }) {
 	if (node.nodeType === Node.TEXT_NODE) {
@@ -94,6 +94,12 @@ interface BibleSidecarSettings {
 	enableLogging: boolean;
 	abbreviateBookNames: boolean;
 	enableOfflineAccents: boolean;
+	annotationsFile: string;
+	annotationsData: Record<string, { color: string; note?: string; text?: string; verses?: Record<string, string | string[]> } | { color: string; note?: string; text?: string; verses?: Record<string, string | string[]> }[]>;
+	parallelEnabled: boolean;
+	secondaryBibleVersion: string;
+	showCrossReferences: boolean;
+	showStrongsNumbers: boolean;
 }
 
 const DEFAULT_SETTINGS: Partial<BibleSidecarSettings> = {
@@ -130,6 +136,12 @@ const DEFAULT_SETTINGS: Partial<BibleSidecarSettings> = {
 	esvApiKey: "",
 	enableLogging: false,
 	abbreviateBookNames: false,
+	annotationsFile: "bible-annotations.md",
+	annotationsData: {},
+	parallelEnabled: false,
+	secondaryBibleVersion: "KJV",
+	showCrossReferences: false,
+	showStrongsNumbers: false,
 };
 
 export class BibleView extends ItemView {
@@ -223,6 +235,7 @@ export class BibleView extends ItemView {
 			else if (iconId === "chevron-down") el.setText("▼");
 			else if (iconId === "chevron-up") el.setText("▲");
 			else if (iconId === "copy") el.setText("📋");
+			else if (iconId === "pencil") el.setText("🖌");
 			else if (iconId === "wifi-off") el.setText("🔌");
 			else if (iconId === "loader") el.setText("⏳");
 			return;
@@ -267,10 +280,53 @@ export class BibleView extends ItemView {
 	}
 	public async updateSettings(newSettings: BibleSidecarSettings): Promise<void> {
 		this.logDebug(`updateSettings called. currentView=${this.currentView}, activeBook=${this.activeBook ? this.activeBook.name : "null"}`);
+		
+		const needsReRender = !this.settings ||
+			this.settings.bibleVersion !== newSettings.bibleVersion ||
+			this.settings.secondaryBibleVersion !== newSettings.secondaryBibleVersion ||
+			this.settings.separateVersesSidecar !== newSettings.separateVersesSidecar ||
+			this.settings.gospelQuotesRed !== newSettings.gospelQuotesRed ||
+			this.settings.showCrossReferences !== newSettings.showCrossReferences ||
+			this.settings.showStrongsNumbers !== newSettings.showStrongsNumbers ||
+			this.settings.abbreviateBookNames !== newSettings.abbreviateBookNames ||
+			this.settings.enableOfflineAccents !== newSettings.enableOfflineAccents;
+
 		this.settings = newSettings;
+
+		if (!needsReRender) {
+			this.logDebug("updateSettings: No structural settings changed. Skipping full view reload (flashing prevented).");
+			if (this.currentView === "verses" && this.activeBook && this.activeChapterNumber !== null) {
+				const chapterContent = this.containerEl.querySelector(".chapter-content") as HTMLElement;
+				if (chapterContent) {
+					// Clear visual highlights first
+					chapterContent.querySelectorAll(".highlight-yellow, .highlight-green, .highlight-blue, .highlight-pink").forEach(el => {
+						el.className = el.className.replace(/\bhighlight-\w+\b/g, "").trim();
+					});
+					chapterContent.querySelectorAll(".highlight-phrase").forEach(span => {
+						const parent = span.parentNode;
+						if (parent) {
+							while (span.firstChild) {
+								parent.insertBefore(span.firstChild, span);
+							}
+							parent.removeChild(span);
+						}
+					});
+					chapterContent.querySelectorAll(".bible-verse-note-indicator").forEach(el => el.remove());
+					chapterContent.normalize();
+					
+					this.applySavedHighlights(chapterContent, this.activeBook.name, this.activeChapterNumber);
+				}
+			}
+			return;
+		}
+
 		if (this.currentView === "verses" && this.activeBook && this.activeChapterNumber !== null) {
 			const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
 			if (container) {
+				const scrollPosBefore = container.scrollTop;
+				this.logDebug(`updateSettings: Saving scroll position for verses before reload: ${scrollPosBefore}`);
+				this.savedScrollPositions["verses"] = scrollPosBefore;
+
 				const books = await this.generateBibleBooks(this.settings.bibleVersion);
 				const mappedBook = books.find((b: any) => b.bookid === this.activeBook!.bookid) || this.activeBook;
 				const chapterContentArray = await this.getChapterContent(
@@ -286,14 +342,22 @@ export class BibleView extends ItemView {
 					this.activeChapterNumber,
 					books
 				);
+				
+				this.restoreScrollPosition("verses");
 				return;
 			}
 		} else if (this.currentView === "chapters" && this.activeBook) {
 			const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
 			if (container) {
+				const scrollPosBefore = container.scrollTop;
+				this.logDebug(`updateSettings: Saving scroll position for chapters before reload: ${scrollPosBefore}`);
+				this.savedScrollPositions["chapters"] = scrollPosBefore;
+
 				const books = await this.generateBibleBooks(this.settings.bibleVersion);
 				const mappedBook = books.find((b: any) => b.bookid === this.activeBook!.bookid) || this.activeBook;
 				await this.renderChapters(mappedBook, container, books);
+				
+				this.restoreScrollPosition("chapters");
 				return;
 			}
 		}
@@ -1002,8 +1066,7 @@ export class BibleView extends ItemView {
 			searchQuery = "";
 			clearBtn.style.display = "none";
 			searchInput.placeholder = "Search verses (e.g. faith)...";
-			searchViewEl.empty();
-			searchViewEl.createDiv({ cls: "no-results-message", text: "Type at least 2 characters to search scripture offline..." });
+			this.renderSearchHelpGuide(searchViewEl);
 			searchInput.focus();
 		});
 
@@ -1024,8 +1087,7 @@ export class BibleView extends ItemView {
 			if (activeTab === "browse") {
 				filterBooks();
 			} else {
-				searchViewEl.empty();
-				searchViewEl.createDiv({ cls: "no-results-message", text: "Type at least 2 characters to search scripture offline..." });
+				this.renderSearchHelpGuide(searchViewEl);
 			}
 			searchInput.focus();
 		});
@@ -1453,6 +1515,16 @@ export class BibleView extends ItemView {
 						e.stopPropagation();
 						this.renderCopyMessage(book, i, `${formattedVerseNumber} ${cleanText}`);
 					});
+
+					const highlightBtn = formattedVerse.createEl("button", {
+						cls: "bible-verse-highlight-btn",
+						attr: { "aria-label": "Highlight Verse", "title": "Highlight Verse" }
+					});
+					this.safeSetIcon(highlightBtn, "pencil");
+					highlightBtn.addEventListener("click", (e) => {
+						e.stopPropagation();
+						this.showHighlightToolbar(e, formattedVerse, book.name, i, verseNum);
+					});
 				});
 			} else {
 				// Clean the inline raw HTML of wrapper headings/copyright
@@ -1632,6 +1704,16 @@ export class BibleView extends ItemView {
 						e.stopPropagation();
 						this.renderCopyMessage(book, i, `${formattedVerseNumber} ${cleanText}`);
 					});
+
+					const highlightBtn = formattedVerse.createEl("button", {
+						cls: "bible-verse-highlight-btn",
+						attr: { "aria-label": "Highlight Verse", "title": "Highlight Verse" }
+					});
+					this.safeSetIcon(highlightBtn, "pencil");
+					highlightBtn.addEventListener("click", (e) => {
+						e.stopPropagation();
+						this.showHighlightToolbar(e, formattedVerse, book.name, i, verse.verse);
+					});
 				}
 			} else {
 				// Inline / paragraph mode — inject all verse HTML as one continuous stream
@@ -1762,6 +1844,46 @@ export class BibleView extends ItemView {
 				);
 			}
 		});
+
+		this.applySavedHighlights(chapterContent, book.name, i);
+		
+		chapterContent.addEventListener("click", (e) => {
+			const selection = document.getSelection();
+			if (selection && !selection.isCollapsed) return;
+			const target = e.target as HTMLElement;
+			const verseEl = target.closest(".verse") || target.closest(".verse-inline");
+			if (verseEl) {
+				const vNum = verseEl.getAttribute("data-verse");
+				if (vNum) {
+					this.showHighlightToolbar(e, verseEl as HTMLElement, book.name, i, vNum);
+				}
+			}
+		});
+
+		chapterContent.addEventListener("mouseup", (e) => {
+			const toolbar = document.querySelector(".bible-highlight-toolbar");
+			if (toolbar && toolbar.contains(e.target as Node)) {
+				return;
+			}
+			setTimeout(() => {
+				const selection = document.getSelection();
+				if (selection && !selection.isCollapsed) {
+					this.logDebug(`mouseup text selection captured: "${selection.toString().trim()}"`);
+					const range = selection.getRangeAt(0);
+					const verseEls: HTMLElement[] = [];
+					chapterContent.querySelectorAll(".verse, .verse-inline").forEach((el: HTMLElement) => {
+						if (selection.containsNode(el, true)) {
+							verseEls.push(el);
+						}
+					});
+					this.logDebug(`Overlapping verses count for selection: ${verseEls.length}`);
+					if (verseEls.length > 0) {
+						const rect = range.getBoundingClientRect();
+						this.showMultiVerseHighlightToolbar(rect, verseEls, range, book.name, i);
+					}
+				}
+			}, 50);
+		});
 	}
 	renderCopyMessage(
 		book: { bookid: number; name: string; chapters: number },
@@ -1779,10 +1901,31 @@ export class BibleView extends ItemView {
 		);
 	}
 
+	renderSearchHelpGuide(el: HTMLElement) {
+		el.empty();
+		const helpContainer = el.createDiv({ cls: "bible-search-help" });
+		helpContainer.createEl("h3", { text: "Advanced Search Operators", cls: "bible-search-help-title" });
+		
+		const list = helpContainer.createEl("ul", { cls: "bible-search-help-list" });
+		
+		const li1 = list.createEl("li");
+		li1.innerHTML = '<strong>"phrase"</strong>: Search exact phrase (e.g. <code>"eternal life"</code>)';
+		
+		const li2 = list.createEl("li");
+		li2.innerHTML = '<strong>-word</strong>: Exclude term (e.g. <code>light -darkness</code>)';
+		
+		const li3 = list.createEl("li");
+		li3.innerHTML = '<strong>nt / ot</strong>: Limit to New/Old Testament (e.g. <code>nt:faith</code>)';
+		
+		const li4 = list.createEl("li");
+		li4.innerHTML = '<strong>BOOK:word</strong>: Filter by book name/code (e.g. <code>ROM:grace</code>)';
+		
+		helpContainer.createEl("p", { text: "Type at least 2 characters to search scripture offline.", cls: "bible-search-help-footer" });
+	}
+
 	async performFullTextSearch(query: string, searchResultsEl: HTMLElement) {
-		searchResultsEl.empty();
 		if (!query || query.trim().length < 2) {
-			searchResultsEl.createDiv({ cls: "no-results-message", text: "Type at least 2 characters to search scripture offline..." });
+			this.renderSearchHelpGuide(searchResultsEl);
 			return;
 		}
 
@@ -1874,5 +2017,514 @@ export class BibleView extends ItemView {
 				await this.navigateToPassage(res.bookName, res.chapter, parseInt(res.verse));
 			});
 		});
+	}
+	applySavedHighlights(container: HTMLElement, bookName: string, chapter: number) {
+		const data = this.settings.annotationsData || {};
+		this.logDebug(`applySavedHighlights called for ${bookName} ${chapter}. Keys count: ${Object.keys(data).length}`);
+		
+		for (const key in data) {
+			const annVal = data[key];
+			if (!annVal) continue;
+			const anns = Array.isArray(annVal) ? annVal : [annVal];
+			
+			anns.forEach(ann => {
+				if (!ann || !ann.color) return;
+				
+				const colonIdx = key.indexOf(":");
+				if (colonIdx === -1) return;
+				const ref = key.substring(0, colonIdx);
+				const spaceIdx = ref.lastIndexOf(" ");
+				if (spaceIdx === -1) return;
+				const book = ref.substring(0, spaceIdx);
+				const ch = parseInt(ref.substring(spaceIdx + 1));
+				
+				if (book !== bookName || ch !== chapter) return;
+				
+				const versePart = key.substring(colonIdx + 1);
+				let startVerse = 0;
+				let endVerse = 0;
+				if (versePart.includes("-")) {
+					const parts = versePart.split("-");
+					startVerse = parseInt(parts[0]);
+					endVerse = parseInt(parts[1]);
+				} else {
+					startVerse = parseInt(versePart);
+					endVerse = startVerse;
+				}
+				
+				for (let v = startVerse; v <= endVerse; v++) {
+					const rawVerseEls = Array.from(container.querySelectorAll(`[data-verse="${v}"]`)) as HTMLElement[];
+					// Filter out nested elements to prevent double-highlighting
+					const verseEls = rawVerseEls.filter(el => !rawVerseEls.some(other => other !== el && other.contains(el)));
+					for (const verseEl of verseEls) {
+						if (ann && ann.color) {
+							if (ann.verses && ann.verses[v.toString()]) {
+								const val = ann.verses[v.toString()];
+								const phrases = Array.isArray(val) ? val : [val];
+								phrases.forEach(phrase => {
+									this.logDebug(`Applying phrase highlight from map: "${phrase}" in color "${ann.color}" to verse ${v}`);
+									this.highlightPhraseInElement(verseEl, phrase, ann.color);
+								});
+							} else if (ann.text) {
+								this.logDebug(`Applying phrase highlight: "${ann.text}" in color "${ann.color}" to verse ${v}`);
+								this.highlightPhraseInElement(verseEl, ann.text, ann.color);
+							} else {
+								this.logDebug(`Applying full verse highlight in color "${ann.color}" to verse ${v}`);
+								verseEl.classList.add(`highlight-${ann.color}`);
+							}
+						}
+						if (ann.note) {
+							this.applyNoteIndicator(verseEl, bookName, chapter, versePart, ann.note);
+						} else {
+							const indicator = verseEl.querySelector(".bible-verse-note-indicator");
+							if (indicator) indicator.remove();
+						}
+					}
+				}
+			});
+		}
+	}
+
+	showHighlightToolbar(e: MouseEvent | DOMRect, verseEl: HTMLElement, bookName: string, chapter: number, verseNum: string) {
+		if (e instanceof MouseEvent) {
+			e.stopPropagation();
+		}
+		const existing = document.querySelector(".bible-highlight-toolbar");
+		if (existing) existing.remove();
+
+		const toolbar = document.createElement("div");
+		toolbar.className = "bible-highlight-toolbar";
+
+		const colors = ["yellow", "green", "blue", "pink"];
+		colors.forEach(color => {
+			const btn = toolbar.createEl("button", { cls: `color-dot bg-${color}` });
+			btn.addEventListener("click", async (ev) => {
+				ev.stopPropagation();
+				await this.applyHighlight(verseEl, bookName, chapter, verseNum, color);
+				toolbar.remove();
+			});
+		});
+
+		const clearBtn = toolbar.createEl("button", { cls: "clear-dot", text: "✖" });
+		clearBtn.addEventListener("click", async (ev) => {
+			ev.stopPropagation();
+			await this.applyHighlight(verseEl, bookName, chapter, verseNum, null);
+			toolbar.remove();
+		});
+
+		const noteBtn = toolbar.createEl("button", { cls: "note-dot", text: "📝" });
+		noteBtn.addEventListener("click", (ev) => {
+			ev.stopPropagation();
+			toolbar.remove();
+			this.showNotePrompt(verseEl, bookName, chapter, verseNum);
+		});
+
+		document.body.appendChild(toolbar);
+
+		const rect = e instanceof DOMRect ? e : verseEl.getBoundingClientRect();
+		toolbar.style.position = "fixed";
+		toolbar.style.top = `${rect.top - 40}px`;
+		toolbar.style.left = `${Math.max(10, rect.left + (rect.width - 150) / 2)}px`;
+		toolbar.style.zIndex = "1000";
+
+		const clickAway = (ev: MouseEvent) => {
+			if (!toolbar.contains(ev.target as Node)) {
+				toolbar.remove();
+				document.removeEventListener("mousedown", clickAway);
+			}
+		};
+		document.addEventListener("mousedown", clickAway);
+	}
+
+	showMultiVerseHighlightToolbar(rect: DOMRect, verseEls: HTMLElement[], range: Range, bookName: string, chapter: number) {
+		const existing = document.querySelector(".bible-highlight-toolbar");
+		if (existing) existing.remove();
+
+		const toolbar = document.createElement("div");
+		toolbar.className = "bible-highlight-toolbar";
+
+		verseEls.sort((a, b) => {
+			const vA = parseInt(a.getAttribute("data-verse") || "0");
+			const vB = parseInt(b.getAttribute("data-verse") || "0");
+			return vA - vB;
+		});
+
+		const startVerse = verseEls[0].getAttribute("data-verse");
+		const endVerse = verseEls[verseEls.length - 1].getAttribute("data-verse");
+		const verseRangeStr = startVerse === endVerse ? startVerse : `${startVerse}-${endVerse}`;
+
+		const colors = ["yellow", "green", "blue", "pink"];
+		colors.forEach(color => {
+			const btn = toolbar.createEl("button", { cls: `color-dot bg-${color}` });
+			btn.addEventListener("click", async (ev) => {
+				ev.stopPropagation();
+				const fullSelectedText = range.toString().trim();
+				
+				const versesMap: Record<string, string | string[]> = {};
+				for (const el of verseEls) {
+					const vNum = el.getAttribute("data-verse");
+					if (vNum) {
+						const phrase = this.getSelectedTextInElement(el, range);
+						if (phrase) {
+							const existingVal = versesMap[vNum];
+							if (existingVal) {
+								if (Array.isArray(existingVal)) {
+									existingVal.push(phrase);
+								} else {
+									versesMap[vNum] = [existingVal, phrase];
+								}
+							} else {
+								versesMap[vNum] = phrase;
+							}
+						}
+					}
+				}
+
+				if (fullSelectedText && verseRangeStr) {
+					await this.applyHighlight(verseEls, bookName, chapter, verseRangeStr, color, fullSelectedText, versesMap);
+				}
+				toolbar.remove();
+				document.getSelection()?.removeAllRanges();
+			});
+		});
+
+		const clearBtn = toolbar.createEl("button", { cls: "clear-dot", text: "✖" });
+		clearBtn.addEventListener("click", async (ev) => {
+			ev.stopPropagation();
+			if (verseRangeStr) {
+				await this.applyHighlight(verseEls, bookName, chapter, verseRangeStr, null);
+			}
+			toolbar.remove();
+			document.getSelection()?.removeAllRanges();
+		});
+
+		const noteBtn = toolbar.createEl("button", { cls: "note-dot", text: "📝" });
+		noteBtn.addEventListener("click", (ev) => {
+			ev.stopPropagation();
+			toolbar.remove();
+			if (verseRangeStr) {
+				this.showNotePrompt(verseEls, bookName, chapter, verseRangeStr);
+			}
+		});
+
+		document.body.appendChild(toolbar);
+
+		toolbar.style.position = "fixed";
+		toolbar.style.top = `${rect.top - 40}px`;
+		toolbar.style.left = `${Math.max(10, rect.left + (rect.width - 150) / 2)}px`;
+		toolbar.style.zIndex = "1000";
+
+		const clickAway = (ev: MouseEvent) => {
+			if (!toolbar.contains(ev.target as Node)) {
+				toolbar.remove();
+				document.removeEventListener("mousedown", clickAway);
+			}
+		};
+		document.addEventListener("mousedown", clickAway);
+	}
+
+	getSelectedTextInElement(element: HTMLElement, range: Range): string {
+		let selectedText = "";
+		const textNodes: Text[] = [];
+		const walk = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null);
+		let node;
+		while (node = walk.nextNode()) {
+			if (node.parentElement && (
+				node.parentElement.classList.contains("verse-num") || 
+				node.parentElement.classList.contains("bible-verse-copy-btn") ||
+				node.parentElement.classList.contains("bible-verse-highlight-btn")
+			)) {
+				continue;
+			}
+			textNodes.push(node as Text);
+		}
+		
+		for (const node of textNodes) {
+			if (range.intersectsNode(node)) {
+				let start = 0;
+				let end = node.length;
+				if (node === range.startContainer) {
+					start = range.startOffset;
+				}
+				if (node === range.endContainer) {
+					end = range.endOffset;
+				}
+				selectedText += node.data.substring(start, end);
+			}
+		}
+		return selectedText.trim();
+	}
+
+	highlightPhraseInElement(element: HTMLElement, phrase: string, color: string) {
+		if (!phrase || !phrase.trim()) return;
+		this.logDebug(`[highlightPhraseInElement] Starting phrase search. Verse: ${element.getAttribute("data-verse") || "unknown"}. Phrase: "${phrase}"`);
+		const textNodes: Text[] = [];
+		const walk = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null);
+		let node;
+		while (node = walk.nextNode()) {
+			if (node.parentElement && (
+				node.parentElement.classList.contains("verse-num") || 
+				node.parentElement.classList.contains("bible-verse-copy-btn") ||
+				node.parentElement.classList.contains("bible-verse-highlight-btn") ||
+				node.parentElement.closest(".bible-highlight-toolbar")
+			)) {
+				continue;
+			}
+			textNodes.push(node as Text);
+		}
+
+		const normalizedTexts = textNodes.map(n => n.data);
+		const fullText = normalizedTexts.join("");
+		
+		const normalizeWS = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+		const normPhrase = normalizeWS(phrase);
+		const normFullText = normalizeWS(fullText);
+		
+		this.logDebug(`[highlightPhraseInElement] Text nodes count: ${textNodes.length}`);
+		this.logDebug(`[highlightPhraseInElement] Raw fullText: "${fullText}"`);
+		this.logDebug(`[highlightPhraseInElement] Normalized phrase: "${normPhrase}"`);
+		this.logDebug(`[highlightPhraseInElement] Normalized fullText: "${normFullText}"`);
+
+		const index = fullText.toLowerCase().indexOf(phrase.toLowerCase());
+		this.logDebug(`[highlightPhraseInElement] Exact match indexOf result: ${index}`);
+		
+		if (index === -1) {
+			const normIndex = normFullText.indexOf(normPhrase);
+			this.logDebug(`[highlightPhraseInElement] Normalized match indexOf result: ${normIndex}`);
+			if (normIndex !== -1) {
+				this.logDebug(`[highlightPhraseInElement] WARNING: Match exists in normalized form but failed in exact text check due to layout spacing/newlines difference.`);
+			} else {
+				this.logDebug(`[highlightPhraseInElement] ERROR: Phrase not found in verse text even after whitespace normalization.`);
+			}
+			return;
+		}
+		if (index === -1) return;
+
+		let charCount = 0;
+		let startNodeIndex = -1;
+		let startOffset = -1;
+		let endNodeIndex = -1;
+		let endOffset = -1;
+
+		const startChar = index;
+		const endChar = index + phrase.length;
+
+		for (let i = 0; i < textNodes.length; i++) {
+			const nodeLength = textNodes[i].length;
+			if (startNodeIndex === -1 && charCount + nodeLength > startChar) {
+				startNodeIndex = i;
+				startOffset = startChar - charCount;
+			}
+			if (endNodeIndex === -1 && charCount + nodeLength >= endChar) {
+				endNodeIndex = i;
+				endOffset = endChar - charCount;
+				break;
+			}
+			charCount += nodeLength;
+		}
+
+		if (startNodeIndex !== -1 && endNodeIndex !== -1) {
+			if (startNodeIndex === endNodeIndex) {
+				const node = textNodes[startNodeIndex];
+				const mid = node.splitText(startOffset);
+				mid.splitText(phrase.length);
+				const span = document.createElement("span");
+				span.className = `highlight-${color} highlight-phrase`;
+				mid.parentNode?.replaceChild(span, mid);
+				span.appendChild(mid);
+			} else {
+				const startNode = textNodes[startNodeIndex];
+				const startMid = startNode.splitText(startOffset);
+				const startSpan = document.createElement("span");
+				startSpan.className = `highlight-${color} highlight-phrase`;
+				startMid.parentNode?.replaceChild(startSpan, startMid);
+				startSpan.appendChild(startMid);
+
+				for (let i = startNodeIndex + 1; i < endNodeIndex; i++) {
+					const midNode = textNodes[i];
+					const midSpan = document.createElement("span");
+					midSpan.className = `highlight-${color} highlight-phrase`;
+					midNode.parentNode?.replaceChild(midSpan, midNode);
+					midSpan.appendChild(midNode);
+				}
+
+				const endNode = textNodes[endNodeIndex];
+				const endMid = endNode.splitText(endOffset);
+				const endSpan = document.createElement("span");
+				endSpan.className = `highlight-${color} highlight-phrase`;
+				endNode.parentNode?.replaceChild(endSpan, endNode);
+				endSpan.appendChild(endNode);
+			}
+			
+			// Remove any full-verse highlight classes from the element to prevent double-highlighting
+			element.classList.remove("highlight-yellow", "highlight-green", "highlight-blue", "highlight-pink");
+		}
+	}
+	applyNoteIndicator(verseEl: HTMLElement, bookName: string, chapter: number, verseNum: string, note: string) {
+		let indicator = verseEl.querySelector(".bible-verse-note-indicator") as HTMLElement;
+		if (!indicator) {
+			const verseNumEl = verseEl.querySelector(".verse-num");
+			if (!verseNumEl) {
+				// Don't prepend note indicators to secondary split poetry lines (lines without verse-num)
+				// to keep visual formatting clean and prevent duplicate note icons on a single verse
+				return;
+			}
+			indicator = document.createElement("span");
+			indicator.className = "bible-verse-note-indicator";
+			indicator.textContent = " 📝";
+			verseNumEl.parentNode?.insertBefore(indicator, verseNumEl.nextSibling);
+			indicator.addEventListener("click", (e) => {
+				e.stopPropagation();
+				this.showNotePrompt(verseEl, bookName, chapter, verseNum);
+			});
+		}
+		indicator.setAttribute("title", note);
+	}
+
+	async applyHighlight(verseElOrEls: HTMLElement | HTMLElement[], bookName: string, chapter: number, verseNumOrRange: string, color: string | null, selectedText?: string, versesMap?: Record<string, string | string[]>) {
+		const key = `${bookName} ${chapter}:${verseNumOrRange}`;
+		this.logDebug(`applyHighlight called: key="${key}", color="${color}", selectedText="${selectedText || ""}"`);
+		if (!this.settings.annotationsData) {
+			this.settings.annotationsData = {};
+		}
+
+		const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
+		if (!container) return;
+
+		// 1. Determine the set of verses affected by this operation
+		const targetVerses = new Set<number>();
+		if (verseNumOrRange.includes("-")) {
+			const [start, end] = verseNumOrRange.split("-").map(Number);
+			for (let v = start; v <= end; v++) targetVerses.add(v);
+		} else {
+			targetVerses.add(Number(verseNumOrRange));
+		}
+
+		// 2. Update the annotations settings data
+		this.settings.annotationsData = updateAnnotationsData(
+			this.settings.annotationsData,
+			bookName,
+			chapter,
+			verseNumOrRange,
+			color,
+			selectedText,
+			versesMap
+		);
+
+		// Save the settings first
+		await this.plugin.saveSettings();
+
+		// 3. Clear current highlights and note badges in DOM for all affected target verses
+		targetVerses.forEach(v => {
+			const rawEls = Array.from(container.querySelectorAll(`[data-verse="${v}"]`)) as HTMLElement[];
+			for (const el of rawEls) {
+				el.classList.remove("highlight-yellow", "highlight-green", "highlight-blue", "highlight-pink");
+				el.querySelectorAll(".highlight-phrase").forEach(span => {
+					const parent = span.parentNode;
+					if (parent) {
+						while (span.firstChild) {
+							parent.insertBefore(span.firstChild, span);
+						}
+						parent.removeChild(span);
+					}
+				});
+				const indicator = el.querySelector(".bible-verse-note-indicator");
+				if (indicator) indicator.remove();
+				el.normalize();
+			}
+		});
+
+		// 4. Repaint all highlights and notes for this chapter cleanly from settings!
+		this.applySavedHighlights(container, bookName, chapter);
+	}
+
+	showNotePrompt(verseElOrEls: HTMLElement | HTMLElement[], bookName: string, chapter: number, verseNum: string) {
+		const key = `${bookName} ${chapter}:${verseNum}`;
+		this.logDebug(`showNotePrompt called for key="${key}"`);
+		const annVal = this.settings.annotationsData?.[key];
+		const primaryAnn = annVal ? (Array.isArray(annVal) ? annVal[0] : annVal) : null;
+		const existing = primaryAnn?.note || "";
+
+		new NoteModal(this.app, `Study Note for ${key}`, existing, async (note) => {
+			this.logDebug(`NoteModal saved for key="${key}". Note content: "${note}"`);
+			if (!this.settings.annotationsData) {
+				this.settings.annotationsData = {};
+			}
+
+			// Update only the note field — preserve existing color and highlight data
+			const curAnn = this.settings.annotationsData[key];
+			if (!curAnn) {
+				// No existing annotation: create one with default yellow highlight
+				this.settings.annotationsData[key] = { color: "yellow", note };
+			} else if (Array.isArray(curAnn)) {
+				if (curAnn.length > 0) {
+					curAnn[0].note = note;
+				} else {
+					curAnn.push({ color: "yellow", note });
+				}
+			} else {
+				curAnn.note = note;
+			}
+
+			// Persist and redraw — same clean pattern as applyHighlight
+			await this.plugin.saveSettings();
+			const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
+			if (container) {
+				this.applySavedHighlights(container, bookName, chapter);
+			}
+		}).open();
+	}
+}
+
+class NoteModal extends Modal {
+	onSubmit: (result: string) => void;
+	existingNote: string;
+	title: string;
+
+	constructor(app: App, title: string, existingNote: string, onSubmit: (result: string) => void) {
+		super(app);
+		this.title = title;
+		this.existingNote = existingNote;
+		this.onSubmit = onSubmit;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.createEl("h3", { text: this.title });
+
+		let textValue = this.existingNote;
+		new Setting(contentEl)
+			.setName("Note Content")
+			.addTextArea((text) => {
+				text.setValue(this.existingNote);
+				text.onChange((value) => {
+					textValue = value;
+				});
+				text.inputEl.rows = 4;
+				text.inputEl.style.width = "100%";
+			});
+
+		new Setting(contentEl)
+			.addButton((btn) =>
+				btn
+					.setButtonText("Save")
+					.setCta()
+					.onClick(() => {
+						this.close();
+						this.onSubmit(textValue);
+					})
+			)
+			.addButton((btn) =>
+				btn
+					.setButtonText("Cancel")
+					.onClick(() => {
+						this.close();
+					})
+			);
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
 	}
 }

@@ -16,7 +16,8 @@ import {
     expandRange,
     parseProtocolParams,
     updateLocalCacheData,
-    searchBibleLocalData
+    searchBibleLocalData,
+    updateAnnotationsData
 } from "./utils";
 
 // Colors for beautiful CLI output
@@ -592,6 +593,99 @@ function runTestSuite() {
 
     const searchRes3 = searchBibleLocalData("nonexistent", mockSearchDb);
     assert(searchRes3.length === 0, "Searching non-existent query returns 0 results");
+
+    // Exact phrase match
+    const searchResExact = searchBibleLocalData('"only Son"', mockSearchDb);
+    assert(searchResExact.length === 1 && searchResExact[0].verse === "16", "Searching '\"only Son\"' exact phrase matches John 3:16");
+
+    const searchResExactFail = searchBibleLocalData('"Son only"', mockSearchDb);
+    assert(searchResExactFail.length === 0, "Searching '\"Son only\"' exact phrase matches nothing");
+
+    // Excluded term
+    const searchResExclusion = searchBibleLocalData("world -condemn", mockSearchDb);
+    assert(searchResExclusion.length === 1 && searchResExclusion[0].verse === "16", "Searching 'world -condemn' filters out John 3:17");
+
+    // Testament scope
+    const searchResNT = searchBibleLocalData("nt:world", mockSearchDb);
+    assert(searchResNT.length === 2, "Searching 'nt:world' matches New Testament book");
+
+    const searchResOT = searchBibleLocalData("ot:world", mockSearchDb);
+    assert(searchResOT.length === 0, "Searching 'ot:world' excludes New Testament book John");
+
+    // Book scope
+    const searchResBookMatch = searchBibleLocalData("JHN:world", mockSearchDb);
+    assert(searchResBookMatch.length === 2, "Searching 'JHN:world' matches book John");
+
+    const searchResBookMismatch = searchBibleLocalData("GEN:world", mockSearchDb);
+    assert(searchResBookMismatch.length === 0, "Searching 'GEN:world' excludes book John");
+    console.log();
+
+    // ----------------------------------------------------
+    // TEST SECTION 14: HIGHLIGHT AND NOTES BEHAVIOR MATRIX
+    // ----------------------------------------------------
+    console.log(`${colors.yellow}${colors.bold}[Test Section 14: Highlight and Notes Behavior Matrix]${colors.reset}`);
+
+    let testData: Record<string, any> = {};
+
+    // 1. Apply Highlight (Yellow) Single Verse
+    testData = updateAnnotationsData(testData, "John", 3, "16", "yellow");
+    assert(testData["John 3:16"] !== undefined, "Annotation for John 3:16 should be created");
+    assert(testData["John 3:16"].color === "yellow", "Highlight color should be yellow");
+    assert(testData["John 3:16"].note === undefined, "Note should be undefined initially");
+
+    // 2. Apply Highlight (Green) Multi-Verse
+    testData = updateAnnotationsData(testData, "Romans", 12, "1-2", "green");
+    assert(testData["Romans 12:1-2"] !== undefined, "Annotation for Romans 12:1-2 should be created");
+    assert(testData["Romans 12:1-2"].color === "green", "Multi-verse color should be green");
+
+    // 3. Apply Phrase Highlight Single Verse
+    testData = updateAnnotationsData(testData, "John", 3, "16", "yellow", "loved the world", { "16": "loved the world" });
+    assert(testData["John 3:16"].text === "loved the world", "Phrase text should be set on John 3:16");
+    assert(testData["John 3:16"].verses["16"] === "loved the world", "Verses map should contain phrase for verse 16");
+
+    // 4. Apply Phrase Highlight Multi-Verse
+    const versesMapRange = { "6": "Draw me", "7": "Tell me" };
+    testData = updateAnnotationsData(testData, "Song of Solomon", 2, "6-7", "pink", "Draw me Tell me", versesMapRange);
+    assert(testData["Song of Solomon 2:6-7"] !== undefined, "Multi-verse phrase highlight should be created");
+    assert(testData["Song of Solomon 2:6-7"].verses["6"] === "Draw me", "Verse 6 phrase should be correct");
+    assert(testData["Song of Solomon 2:6-7"].verses["7"] === "Tell me", "Verse 7 phrase should be correct");
+
+    // 5. Add Study Note Single Verse (without existing note)
+    // First clear John 3:16 to start clean
+    testData = updateAnnotationsData(testData, "John", 3, "16", null);
+    testData = updateAnnotationsData(testData, "John", 3, "16", "yellow", undefined, undefined);
+    testData["John 3:16"].note = "This is a single verse note"; // simulate NoteModal submit
+    assert(testData["John 3:16"].note === "This is a single verse note", "Single verse note should be saved");
+    assert(testData["John 3:16"].color === "yellow", "Single verse color should default/persist");
+
+    // 6. Add Study Note Multi-Verse (without existing note)
+    testData = updateAnnotationsData(testData, "Genesis", 1, "1-2", "yellow");
+    testData["Genesis 1:1-2"].note = "Beginning note";
+    assert(testData["Genesis 1:1-2"].note === "Beginning note", "Multi-verse note should be saved");
+
+    // 7. Add Study Note Single Verse with Phrase Highlight
+    testData = updateAnnotationsData(testData, "John", 3, "16", "pink", "loved the world", { "16": "loved the world" });
+    assert(testData["John 3:16"].note === "This is a single verse note", "Note should be preserved during phrase highlight changes");
+    assert(testData["John 3:16"].text === "loved the world", "Phrase text should still exist");
+
+    // 8. Add Study Note Multi-Verse with Phrase Highlight
+    testData = updateAnnotationsData(testData, "Song of Solomon", 2, "6-7", "pink", "Draw me Tell me", versesMapRange);
+    testData["Song of Solomon 2:6-7"].note = "Love poetry note";
+    assert(testData["Song of Solomon 2:6-7"].note === "Love poetry note", "Multi-verse phrase note saved");
+    assert(testData["Song of Solomon 2:6-7"].verses["6"] === "Draw me", "Verses map phrase preserved");
+
+    // 9. Clear Highlight Single/Multi-Verse (including overlapping clear checks)
+    // Clear Romans 12:1-2 (which clears Romans 12:1-2 green)
+    testData = updateAnnotationsData(testData, "Romans", 12, "1-2", null);
+    assert(testData["Romans 12:1-2"] === undefined, "Romans 12:1-2 should be deleted on clear");
+
+    // Test overlapping clear: clearing Romans 12:1 should delete Romans 12:1-2 key
+    // Re-apply Romans 12:1-2
+    testData = updateAnnotationsData(testData, "Romans", 12, "1-2", "green");
+    // Clear only Romans 12:1
+    testData = updateAnnotationsData(testData, "Romans", 12, "1", null);
+    assert(testData["Romans 12:1-2"] === undefined, "Overlapping clear should delete Romans 12:1-2 key");
+
     console.log();
 }
 

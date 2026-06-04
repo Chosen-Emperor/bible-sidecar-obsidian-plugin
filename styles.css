@@ -109,6 +109,8 @@
 .bible-search-clear {
     position: absolute;
     right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
     color: var(--text-muted);
     cursor: pointer;
     background: transparent;
@@ -117,8 +119,11 @@
     align-items: center;
     justify-content: center;
     padding: 4px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
     transition: var(--sidecar-transition);
+    box-sizing: border-box;
 }
 
 .bible-search-clear:hover {
@@ -129,6 +134,53 @@
 .bible-search-clear svg {
     width: 12px;
     height: 12px;
+}
+
+/* Search Operators Guide Tooltip */
+.bible-search-help {
+    padding: 16px;
+    background-color: var(--background-secondary);
+    border: 1px solid var(--sidecar-border);
+    border-radius: var(--sidecar-radius);
+    text-align: left;
+    margin-top: 10px;
+}
+
+.bible-search-help-title {
+    font-size: var(--font-ui-small);
+    font-weight: 600;
+    margin-top: 0;
+    margin-bottom: 12px;
+    color: var(--text-normal);
+}
+
+.bible-search-help-list {
+    margin: 0;
+    padding-left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.bible-search-help-list li {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+.bible-search-help-list li code {
+    background-color: var(--background-primary);
+    padding: 2px 4px;
+    border-radius: 3px;
+    color: var(--text-accent);
+}
+
+.bible-search-help-footer {
+    margin-top: 14px;
+    margin-bottom: 0;
+    font-size: var(--font-ui-smaller);
+    font-style: italic;
+    color: var(--text-faint);
+    text-align: center;
 }
 
 /* Two-section Testament Headers */
@@ -372,7 +424,7 @@
 
 [data-type="bible-view-plus"] .verse {
     position: relative;
-    padding: 6px 12px;
+    padding: 6px 64px 6px 12px;
     border-radius: var(--sidecar-radius);
     line-height: 1.6;
     font-size: var(--font-normal);
@@ -575,6 +627,22 @@ body.bible-hide-link-icons a.external-link[href^="obsidian://bible"] svg {
     }
 
     .bible-verse-copy-btn svg {
+        width: 16px !important;
+        height: 16px !important;
+        display: block !important;
+    }
+
+    .bible-verse-highlight-btn {
+        opacity: 0.85 !important;
+        transform: translateY(-50%) scale(1) !important;
+        background-color: var(--background-secondary) !important;
+        border-color: var(--sidecar-border) !important;
+        width: 38px !important;
+        height: 38px !important;
+        right: 50px !important;
+    }
+
+    .bible-verse-highlight-btn svg {
         width: 16px !important;
         height: 16px !important;
         display: block !important;
@@ -1031,4 +1099,155 @@ body.bible-hide-link-icons a.external-link[href^="obsidian://bible"] svg {
 @keyframes sidecarFadeIn {
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
+}
+
+/* Custom Highlights Colors */
+[data-type="bible-view-plus"] .highlight-yellow {
+    background-color: rgba(255, 235, 59, 0.3) !important;
+}
+[data-type="bible-view-plus"] .highlight-green {
+    background-color: rgba(76, 175, 80, 0.3) !important;
+}
+[data-type="bible-view-plus"] .highlight-blue {
+    background-color: rgba(33, 150, 243, 0.3) !important;
+}
+[data-type="bible-view-plus"] .highlight-pink {
+    background-color: rgba(233, 30, 99, 0.3) !important;
+}
+
+/* Highlighter Toolbar */
+.bible-highlight-toolbar {
+    background-color: var(--background-secondary);
+    border: 1px solid var(--sidecar-border);
+    border-radius: 20px;
+    padding: 6px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+}
+
+.bible-highlight-toolbar button {
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.bible-highlight-toolbar .color-dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    transition: var(--sidecar-transition);
+}
+
+.bible-highlight-toolbar .color-dot:hover {
+    transform: scale(1.2);
+}
+
+.bible-highlight-toolbar .bg-yellow { background-color: #ffe082; }
+.bible-highlight-toolbar .bg-green { background-color: #a5d6a7; }
+.bible-highlight-toolbar .bg-blue { background-color: #90caf9; }
+.bible-highlight-toolbar .bg-pink { background-color: #f48fb1; }
+
+.bible-highlight-toolbar .clear-dot {
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 14px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+}
+.bible-highlight-toolbar .clear-dot:hover {
+    color: var(--text-normal);
+    background-color: var(--background-modifier-hover);
+}
+
+.bible-highlight-toolbar .note-dot {
+    background: transparent;
+    font-size: 14px;
+    width: 20px;
+    height: 20px;
+}
+.bible-highlight-toolbar .note-dot:hover {
+    transform: scale(1.2);
+}
+
+/* Desktop Highlight Button */
+.bible-verse-highlight-btn {
+    position: absolute;
+    right: 36px;
+    top: 50%;
+    transform: translateY(-50%) scale(0.85);
+    opacity: 0;
+    background-color: var(--background-primary);
+    border: 1px solid var(--sidecar-border);
+    color: var(--text-muted);
+    border-radius: 4px;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: var(--sidecar-transition);
+    padding: 0;
+    z-index: 5;
+}
+
+.bible-verse-highlight-btn svg {
+    width: 12px;
+    height: 12px;
+    display: block;
+}
+
+[data-type="bible-view-plus"] .verse:hover .bible-verse-highlight-btn {
+    opacity: 1;
+    transform: translateY(-50%) scale(1);
+}
+
+.bible-verse-highlight-btn:hover {
+    color: var(--interactive-accent);
+    border-color: var(--interactive-accent);
+    background-color: var(--sidecar-hover-bg);
+}
+
+/* Highlight Color Overlays */
+.highlight-yellow {
+    background-color: rgba(255, 224, 130, 0.3) !important;
+    border-radius: 4px;
+    padding: 2px 0;
+}
+.highlight-green {
+    background-color: rgba(165, 214, 167, 0.3) !important;
+    border-radius: 4px;
+    padding: 2px 0;
+}
+.highlight-blue {
+    background-color: rgba(144, 202, 249, 0.3) !important;
+    border-radius: 4px;
+    padding: 2px 0;
+}
+.highlight-pink {
+    background-color: rgba(244, 143, 177, 0.3) !important;
+    border-radius: 4px;
+    padding: 2px 0;
+}
+
+/* Note Indicator Badge */
+.bible-verse-note-indicator {
+    font-size: 0.85em;
+    cursor: help;
+    display: inline-block;
+    margin-left: 4px;
+    opacity: 0.8;
+    transition: var(--sidecar-transition);
+}
+
+.bible-verse-note-indicator:hover {
+    opacity: 1;
+    transform: scale(1.2);
 }

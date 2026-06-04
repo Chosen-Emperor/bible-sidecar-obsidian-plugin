@@ -441,6 +441,95 @@ export function updateLocalCacheData(
 	return localData;
 }
 
+export interface ParsedQuery {
+	exactPhrases: string[];
+	includedTerms: string[];
+	excludedTerms: string[];
+	bookFilter?: string;
+	testamentFilter?: "ot" | "nt";
+}
+
+export function parseAdvancedSearchQuery(query: string): ParsedQuery {
+	const exactPhrases: string[] = [];
+	const includedTerms: string[] = [];
+	const excludedTerms: string[] = [];
+	let bookFilter: string | undefined = undefined;
+	let testamentFilter: "ot" | "nt" | undefined = undefined;
+
+	let tempQuery = query;
+	const phraseRegex = /"([^"]+)"/g;
+	let match;
+	while ((match = phraseRegex.exec(query)) !== null) {
+		exactPhrases.push(match[1].toLowerCase());
+	}
+	tempQuery = tempQuery.replace(phraseRegex, " ");
+
+	const parts = tempQuery.split(/\s+/).filter(p => p);
+	for (const part of parts) {
+		const partLower = part.toLowerCase();
+		if (partLower.startsWith("nt:") || partLower === "nt") {
+			testamentFilter = "nt";
+		} else if (partLower.startsWith("ot:") || partLower === "ot") {
+			testamentFilter = "ot";
+		} else if (part.includes(":") && !part.startsWith("http")) {
+			const idx = part.indexOf(":");
+			const bPref = part.substring(0, idx).toUpperCase();
+			const term = part.substring(idx + 1);
+			bookFilter = bPref;
+			if (term) {
+				if (term.startsWith("-")) {
+					excludedTerms.push(term.substring(1).toLowerCase());
+				} else {
+					includedTerms.push(term.toLowerCase());
+				}
+			}
+		} else if (part.startsWith("-") && part.length > 1) {
+			excludedTerms.push(partLower.substring(1));
+		} else {
+			includedTerms.push(partLower);
+		}
+	}
+
+	return { exactPhrases, includedTerms, excludedTerms, bookFilter, testamentFilter };
+}
+
+export function matchesSearchQuery(
+	text: string,
+	bookName: string,
+	bookid: number,
+	parsed: ParsedQuery
+): boolean {
+	const textLower = text.toLowerCase();
+	
+	if (parsed.testamentFilter === "ot" && bookid >= 40) return false;
+	if (parsed.testamentFilter === "nt" && bookid < 40) return false;
+
+	if (parsed.bookFilter) {
+		const targetId = parsed.bookFilter.toUpperCase();
+		const currentBookCode = (BIBLE_BOOK_MAP[bookName.toLowerCase()] || bookName.toUpperCase().substring(0, 3)).toUpperCase();
+		
+		const codeMatches = currentBookCode === targetId;
+		const nameMatches = bookName.toUpperCase() === targetId;
+		const prefixMatches = bookName.toLowerCase().startsWith(targetId.toLowerCase());
+		
+		if (!codeMatches && !nameMatches && !prefixMatches) return false;
+	}
+
+	for (const phrase of parsed.exactPhrases) {
+		if (!textLower.includes(phrase)) return false;
+	}
+
+	for (const term of parsed.includedTerms) {
+		if (!textLower.includes(term)) return false;
+	}
+
+	for (const term of parsed.excludedTerms) {
+		if (textLower.includes(term)) return false;
+	}
+
+	return true;
+}
+
 export function searchBibleLocalData(
 	query: string,
 	localData: any,
@@ -449,7 +538,7 @@ export function searchBibleLocalData(
 ): { bookName: string; bookid: number; chapter: number; verse: string; text: string }[] {
 	if (!query || !localData) return [];
 	const results: { bookName: string; bookid: number; chapter: number; verse: string; text: string }[] = [];
-	const searchTerms = query.toLowerCase().split(/\s+/).filter(t => t);
+	const parsed = parseAdvancedSearchQuery(query);
 
 	const passages = localData.passages;
 	const books = localData.books;
@@ -470,8 +559,7 @@ export function searchBibleLocalData(
 					: (apiBibleHtmlParser ? apiBibleHtmlParser(cachedChapter.html) : []);
 				for (const v of verses) {
 					const cleanText = v.text.replace(/<[^>]*>?/gm, '').trim();
-					const cleanLower = cleanText.toLowerCase();
-					if (searchTerms.every(term => cleanLower.includes(term))) {
+					if (matchesSearchQuery(cleanText, book.name, book.bookid, parsed)) {
 						results.push({
 							bookName: book.name,
 							bookid: book.bookid,
@@ -483,16 +571,14 @@ export function searchBibleLocalData(
 				}
 			} else {
 				for (const verse of cachedChapter) {
-					const verseText = (verse.text || "").replace(/<[^>]*>?/gm, '').toLowerCase();
-					const matchesAll = searchTerms.every(term => verseText.includes(term));
-					
-					if (matchesAll) {
+					const cleanText = verse.text.replace(/<[^>]*>?/gm, '').trim();
+					if (matchesSearchQuery(cleanText, book.name, book.bookid, parsed)) {
 						results.push({
 							bookName: book.name,
 							bookid: book.bookid,
 							chapter: chapterNum,
 							verse: verse.verse,
-							text: verse.text.replace(/<[^>]*>?/gm, '').trim()
+							text: cleanText
 						});
 					}
 				}
@@ -503,4 +589,81 @@ export function searchBibleLocalData(
 	}
 	return results;
 }
+
+export function updateAnnotationsData(
+	annotationsData: Record<string, any>,
+	bookName: string,
+	chapter: number,
+	verseNumOrRange: string,
+	color: string | null,
+	selectedText?: string,
+	versesMap?: Record<string, string | string[]>
+): Record<string, any> {
+	const result = JSON.parse(JSON.stringify(annotationsData || {})); // Deep copy to prevent side effects
+	const key = `${bookName} ${chapter}:${verseNumOrRange}`;
+	
+	const targetVerses = new Set<number>();
+	if (verseNumOrRange.includes("-")) {
+		const [start, end] = verseNumOrRange.split("-").map(Number);
+		for (let v = start; v <= end; v++) targetVerses.add(v);
+	} else {
+		targetVerses.add(Number(verseNumOrRange));
+	}
+
+	if (!color) {
+		const keysToDelete: string[] = [];
+		for (const annKey of Object.keys(result)) {
+			const colonIdx = annKey.indexOf(":");
+			if (colonIdx === -1) continue;
+			const ref = annKey.substring(0, colonIdx);
+			const spaceIdx = ref.lastIndexOf(" ");
+			if (spaceIdx === -1) continue;
+			const bName = ref.substring(0, spaceIdx);
+			const chNum = parseInt(ref.substring(spaceIdx + 1));
+			
+			if (bName === bookName && chNum === chapter) {
+				const versePart = annKey.substring(colonIdx + 1);
+				let startVerse = 0;
+				let endVerse = 0;
+				if (versePart.includes("-")) {
+					const parts = versePart.split("-");
+					startVerse = parseInt(parts[0]);
+					endVerse = parseInt(parts[1]);
+				} else {
+					startVerse = parseInt(versePart);
+					endVerse = startVerse;
+				}
+				
+				let overlaps = false;
+				for (let v = startVerse; v <= endVerse; v++) {
+					if (targetVerses.has(v)) {
+						overlaps = true;
+						break;
+					}
+				}
+				if (overlaps) {
+					keysToDelete.push(annKey);
+				}
+			}
+		}
+		for (const k of keysToDelete) {
+			delete result[k];
+		}
+	} else {
+		const existing = result[key];
+		const existingNote = existing ? (Array.isArray(existing) ? existing[0]?.note : existing.note) : undefined;
+
+		if (selectedText) {
+			result[key] = { color, text: selectedText, verses: versesMap, note: existingNote };
+		} else {
+			if (existing && !Array.isArray(existing)) {
+				existing.color = color;
+			} else {
+				result[key] = { color, note: existingNote };
+			}
+		}
+	}
+	return result;
+}
+
 

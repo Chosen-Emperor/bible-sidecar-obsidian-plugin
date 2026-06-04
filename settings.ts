@@ -393,6 +393,19 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 					});
 			});
 
+		new Setting(containerEl)
+			.setName("Study Annotations Sync File")
+			.setDesc("Relative path in your vault where highlights/notes sync (e.g. bible-annotations.md)")
+			.addText((text) => {
+				text
+					.setPlaceholder("bible-annotations.md")
+					.setValue(this.plugin.settings.annotationsFile)
+					.onChange((value) => {
+						this.plugin.settings.annotationsFile = value || "bible-annotations.md";
+						this.plugin.saveSettings();
+					});
+			});
+
 		const premiumDetails = containerEl.createEl("details", { 
 			cls: "bible-settings-details" 
 		});

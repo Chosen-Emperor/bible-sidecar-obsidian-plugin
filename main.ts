@@ -55,6 +55,12 @@ interface BibleSidecarSettings {
 	enableLogging: boolean;
 	abbreviateBookNames: boolean;
 	enableOfflineAccents: boolean;
+	annotationsFile: string;
+	annotationsData: Record<string, { color: string; note?: string; text?: string; verses?: Record<string, string | string[]> } | { color: string; note?: string; text?: string; verses?: Record<string, string | string[]> }[]>;
+	parallelEnabled: boolean;
+	secondaryBibleVersion: string;
+	showCrossReferences: boolean;
+	showStrongsNumbers: boolean;
 }
 
 export const DEFAULT_SETTINGS: Partial<BibleSidecarSettings> = {
@@ -94,6 +100,12 @@ export const DEFAULT_SETTINGS: Partial<BibleSidecarSettings> = {
 	esvApiKey: "",
 	enableLogging: false,
 	abbreviateBookNames: false,
+	annotationsFile: "bible-annotations.md",
+	annotationsData: {},
+	parallelEnabled: false,
+	secondaryBibleVersion: "KJV",
+	showCrossReferences: false,
+	showStrongsNumbers: false,
 };
 
 const LANGUAGE_DEFAULT_VERSIONS: Record<string, string> = {
@@ -1119,8 +1131,67 @@ export default class BibleSidecarPlugin extends Plugin {
 			}
 		}
 	}
-
-
+	async syncAnnotationsToVault() {
+		const filePath = this.settings.annotationsFile || "bible-annotations.md";
+		const data = this.settings.annotationsData || {};
+		
+		let content = "# Bible Sidecar Study Annotations\n\nThis file is automatically synchronized with your highlights and study notes.\n\n";
+		
+		const entriesByBook: Record<string, string[]> = {};
+		for (const key in data) {
+			const itemVal = data[key];
+			if (!itemVal) continue;
+			const items = Array.isArray(itemVal) ? itemVal : [itemVal];
+			
+			const colonIdx = key.indexOf(":");
+			if (colonIdx === -1) continue;
+			const ref = key.substring(0, colonIdx);
+			const spaceIdx = ref.lastIndexOf(" ");
+			if (spaceIdx === -1) continue;
+			const book = ref.substring(0, spaceIdx);
+			
+			if (!entriesByBook[book]) {
+				entriesByBook[book] = [];
+			}
+			
+			for (const item of items) {
+				if (!item || (!item.color && !item.note)) continue;
+				const chapter = ref.substring(spaceIdx + 1);
+				const versePart = key.substring(colonIdx + 1);
+				const uri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${chapter}&verse=${versePart.replace("-", ",")}`;
+				let entryLine = `- **[${key}](${uri})**`;
+				if (item.text) {
+					entryLine += ` ==${item.text}==`;
+				}
+				entryLine += ` [${item.color || "highlighted"}]`;
+				if (item.note) {
+					entryLine += `: *"${item.note}"*`;
+				}
+				entriesByBook[book].push(entryLine);
+			}
+		}
+		
+		for (const book in entriesByBook) {
+			content += `## ${book}\n\n`;
+			content += entriesByBook[book].join("\n") + "\n\n";
+		}
+		
+		try {
+			const exists = await this.app.vault.adapter.exists(filePath);
+			if (!exists) {
+				await this.app.vault.create(filePath, content);
+			} else {
+				const file = this.app.workspace.getActiveFile() || this.app.vault.getAbstractFileByPath(filePath);
+				if (file && file.path === filePath) {
+					await this.app.vault.modify(file as any, content);
+				} else {
+					await this.app.vault.adapter.write(filePath, content);
+				}
+			}
+		} catch (err) {
+			console.error("Failed to sync annotations to vault file:", err);
+		}
+	}
 
 	async saveSettings() {
 		if (this.saveDebounceTimer) {
@@ -1130,6 +1201,7 @@ export default class BibleSidecarPlugin extends Plugin {
 			await this.saveData(this.settings);
 			document.body.classList.toggle("bible-hide-link-icons", this.settings.hideLinkIcon);
 			console.log("Saved settings", this.settings);
+			await this.syncAnnotationsToVault();
 			this.updateBibleViewSettings(this.settings);
 			this.saveDebounceTimer = null;
 		}, 400);
