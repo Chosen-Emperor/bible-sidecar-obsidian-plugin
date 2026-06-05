@@ -1573,4 +1573,129 @@ mark.search-match {
 
 .strongs-error {
     color: var(--text-error, #e74c3c);
+}
+
+/* Mobile Interactivity & bottom navigation layout adjustments */
+@media (max-width: 480px) {
+    [data-type="bible-view-plus"] .bible-wrapper {
+        position: relative;
+    }
+    
+    [data-type="bible-view-plus"] .bible-tabs-container {
+        position: absolute !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        margin-top: 0 !important;
+        background-color: var(--background-secondary-alt) !important;
+        backdrop-filter: blur(12px) !important;
+        -webkit-backdrop-filter: blur(12px) !important;
+        border-top: 1px solid var(--sidecar-border) !important;
+        border-bottom: none !important;
+        padding: 8px 16px !important;
+        z-index: 100 !important;
+        box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05) !important;
+    }
+    
+    [data-type="bible-view-plus"] .chapter-container {
+        padding-bottom: 60px !important;
+    }
+
+    [data-type="bible-view-plus"] .bible-view-controls-bottom {
+        padding-bottom: 60px !important;
+    }
+
+    .bible-tab-btn {
+        padding: 10px 12px !important;
+        font-size: var(--font-ui-small) !important;
+        border-radius: 8px !important;
+    }
+}
+
+/* Select Mode Button active state */
+.bible-select-mode-btn.is-active {
+    color: var(--text-on-accent, var(--background-primary)) !important;
+    background-color: var(--interactive-accent) !important;
+    border-color: var(--interactive-accent) !important;
+}
+
+/* Tap-to-select verse styling */
+[data-type="bible-view-plus"] .verse.is-selected-for-annotation {
+    background-color: rgba(var(--interactive-accent-rgb, 122, 122, 122), 0.15) !important;
+    outline: 2px solid var(--interactive-accent) !important;
+    box-shadow: 0 0 10px rgba(var(--interactive-accent-rgb, 122, 122, 122), 0.2) !important;
+}
+
+[data-type="bible-view-plus"] .verse-inline.is-selected-for-annotation {
+    background-color: rgba(var(--interactive-accent-rgb, 122, 122, 122), 0.15) !important;
+    outline: 1.5px solid var(--interactive-accent) !important;
+    border-radius: 4px !important;
+}
+
+/* Mobile Selection/Annotation Toolbar */
+.mobile-annotation-toolbar {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: var(--background-secondary-alt);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--sidecar-border);
+    border-radius: 30px;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    z-index: 2000;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+    animation: slideUpMobileToolbar 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes slideUpMobileToolbar {
+    from {
+        transform: translate(-50%, 100px);
+        opacity: 0;
+    }
+    to {
+        transform: translate(-50%, 0);
+        opacity: 1;
+    }
+}
+
+.mobile-annotation-toolbar-title {
+    font-size: var(--font-ui-smaller);
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding-right: 8px;
+    border-right: 1px solid var(--sidecar-border);
+}
+
+.mobile-annotation-toolbar .color-dot {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: var(--sidecar-transition);
+}
+
+.mobile-annotation-toolbar .color-dot:active {
+    transform: scale(0.85);
+}
+
+.mobile-annotation-toolbar .clear-dot,
+.mobile-annotation-toolbar .note-dot {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
 }

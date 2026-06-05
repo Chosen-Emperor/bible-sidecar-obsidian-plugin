@@ -1,6 +1,6 @@
 import { BibleView, BibleViewType } from "BibleView";
 import { BibleSidecarSettingsTab } from "./settings";
-import { Plugin, WorkspaceLeaf, Editor, Notice, requestUrl } from "obsidian";
+import { Plugin, WorkspaceLeaf, Editor, Notice, requestUrl, SuggestModal, App, MarkdownView } from "obsidian";
 import {
 	SELECTION_REGEX,
 	SELECTION_VERSE_REGEX,
@@ -416,11 +416,30 @@ export default class BibleSidecarPlugin extends Plugin {
 			}
 		);
 
+		this.addRibbonIcon(
+			"search",
+			"Search Bible Verse Reference",
+			(evt: MouseEvent) => {
+				new QuickReferenceModal(this.app, this).open();
+			}
+		);
+
 		this.addCommand({
 			id: "open-bible-sidecar",
 			name: "Open Bible Sidecar",
 			callback: this.toggleBibleSidecarView,
 			icon: "book-open-text",
+		});
+
+		this.addCommand({
+			id: "bible-sidecar-quick-reference",
+			name: "Search and Reference Verse",
+			editorCallback: (editor: Editor) => {
+				new QuickReferenceModal(this.app, this, editor).open();
+			},
+			callback: () => {
+				new QuickReferenceModal(this.app, this).open();
+			}
 		});
 		
 		this.addCommand({
@@ -1205,5 +1224,328 @@ export default class BibleSidecarPlugin extends Plugin {
 			this.updateBibleViewSettings(this.settings);
 			this.saveDebounceTimer = null;
 		}, 400);
+	}
+
+	async fetchScriptureRange(
+		book: string,
+		chapter: number,
+		startVerse: number,
+		endVerse?: number
+	): Promise<{ versesList: { verse: number; text: string }[] } | null> {
+		const lastVerse = endVerse !== undefined ? endVerse : startVerse;
+		const localData = await this.readLocalTranslation(this.settings.bibleVersion);
+		let versesList: { verse: number; text: string }[] = [];
+		let fetchSuccess = false;
+
+		if (localData) {
+			const targetBook = localData.books.find((b: any) => b.name.toLowerCase() === book.toLowerCase() || b.name.toLowerCase().startsWith(book.toLowerCase()));
+			if (targetBook) {
+				const cachedChapter = localData.passages[targetBook.bookid]?.[chapter];
+				if (cachedChapter) {
+					if (cachedChapter.isEsvApi) {
+						const parser = new DOMParser();
+						const doc = parser.parseFromString(cachedChapter.html, "text/html");
+						doc.querySelectorAll(".extra_text, .audio, .copyright, .mp3link").forEach(el => el.remove());
+						const spans = doc.querySelectorAll("b.verse-num, b.chapter-num, span.chapter-num");
+						let currentChapter = chapter;
+						spans.forEach((span) => {
+							let textContent = span.textContent || "";
+							let vNum = 0;
+							if (span.classList.contains("chapter-num") || (span.tagName.toLowerCase() === "span" && span.classList.contains("chapter-num"))) {
+								const trimmed = textContent.trim();
+								if (trimmed.includes(":")) {
+									const parts = trimmed.split(":");
+									currentChapter = parseInt(parts[0]) || currentChapter;
+									vNum = parseInt(parts[1]) || 1;
+								} else {
+									currentChapter = parseInt(trimmed) || currentChapter;
+									vNum = 1;
+								}
+							} else {
+								vNum = parseInt(textContent.trim()) || 0;
+							}
+							if (currentChapter === chapter && vNum >= startVerse && vNum <= lastVerse) {
+								let text = "";
+								let next = span.nextSibling;
+								while (next && !(next instanceof Element && (next.classList.contains("verse-num") || next.classList.contains("chapter-num") || (next.tagName.toLowerCase() === "b" && next.classList.contains("verse-num"))))) {
+									text += next.textContent || "";
+									next = next.nextSibling;
+								}
+								let cleanText = text.trim().replace(/\n+/g, " ").replace(/^\d+:\d+\s*/, "");
+								versesList.push({ verse: vNum, text: cleanText });
+							}
+						});
+						fetchSuccess = versesList.length > 0;
+					} else if (cachedChapter.isApiBible) {
+						const parser = new DOMParser();
+						const doc = parser.parseFromString(cachedChapter.html, "text/html");
+						const spans = doc.querySelectorAll("span.v");
+						spans.forEach((span) => {
+							const vNum = parseInt(span.getAttribute("data-number") || span.textContent || "0");
+							if (vNum >= startVerse && vNum <= lastVerse) {
+								let text = "";
+								let next = span.nextSibling;
+								if (!next && span.parentElement && span.parentElement.classList.contains("verse-span")) {
+									next = span.parentElement.nextSibling;
+								}
+								while (next && !(next instanceof Element && (next.classList.contains("v") || next.querySelector(".v")))) {
+									text += next.textContent || "";
+									next = next.nextSibling;
+								}
+								let cleanText = text.trim().replace(/\n+/g, " ").replace(/^\d+:\d+\s*/, "");
+								versesList.push({ verse: vNum, text: cleanText });
+							}
+						});
+						fetchSuccess = versesList.length > 0;
+					} else {
+						for (const verse of cachedChapter) {
+							const vNum = parseInt(verse.verse);
+							if (vNum >= startVerse && vNum <= lastVerse) {
+								const cleanText = verse.text.replace(/<[^>]*>?/gm, '').replace(/^\d+:\d+\s*/, "").trim();
+								versesList.push({ verse: vNum, text: cleanText });
+							}
+						}
+						fetchSuccess = true;
+					}
+				}
+			}
+		}
+
+		if (!fetchSuccess) {
+			try {
+				const booksRes = await requestUrl(`https://bolls.life/get-books/${this.settings.bibleVersion}`);
+				const targetBook = booksRes.json.find((b: any) => b.name.toLowerCase() === book.toLowerCase() || b.name.toLowerCase().startsWith(book.toLowerCase()));
+				if (targetBook) {
+					const chapterRes = await requestUrl(`https://bolls.life/get-chapter/${this.settings.bibleVersion}/${targetBook.bookid}/${chapter}`);
+					for (const verse of chapterRes.json) {
+						const vNum = parseInt(verse.verse);
+						if (vNum >= startVerse && vNum <= lastVerse) {
+							const cleanText = verse.text.replace(/<[^>]*>?/gm, '').replace(/^\d+:\d+\s*/, "").trim();
+							versesList.push({ verse: vNum, text: cleanText });
+						}
+					}
+					fetchSuccess = true;
+				}
+			} catch (err) {
+				console.error("Online fetch failed:", err);
+			}
+		}
+
+		return fetchSuccess ? { versesList } : null;
+	}
+
+	compileReferenceOutput(
+		bookName: string,
+		chapter: number,
+		verses: { verse: number; text: string }[],
+		settings: any
+	): string {
+		const versesList = verses.map(v => {
+			const supText = convertToSuperscript(v.verse);
+			const uri = `obsidian://bible?book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${v.verse}`;
+			return `[${supText}](${uri}) ${v.text}`;
+		});
+
+		const scriptureText = versesList.join(" ");
+		const startVerse = verses[0].verse;
+		const endVerse = verses[verses.length - 1].verse;
+		const rangeStr = startVerse === endVerse ? startVerse.toString() : `${startVerse}-${endVerse}`;
+		
+		const vList = verses.map(v => v.verse).join(",");
+		const uri = `obsidian://bible?book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${vList}`;
+		
+		let referenceLink = "";
+		if (settings.verseReferenceInternalLinking) {
+			referenceLink = `[[${bookName}]] [${chapter}:${rangeStr}](${uri})`;
+		} else {
+			referenceLink = `[${bookName} ${chapter}:${rangeStr}](${uri})`;
+		}
+
+		let finalText = "";
+		if (settings.copyFormat === "callout") {
+			finalText = `> [!quote] ${referenceLink}\n> ${scriptureText}`;
+		} else {
+			if (settings.copyVerseReference) {
+				finalText = `${scriptureText}\n${settings.verseReferenceStyle}${referenceLink}`;
+			} else {
+				finalText = scriptureText;
+			}
+		}
+		return finalText;
+	}
+}
+
+interface ParsedReference {
+	book: string;
+	chapter: number;
+	startVerse: number;
+	endVerse: number;
+	isValid: boolean;
+}
+
+function parseQuickReference(query: string): ParsedReference | null {
+	const trimmed = query.trim();
+	if (!trimmed) return null;
+
+	const verseMatch = trimmed.match(/^([1-3]?\s*[a-zA-Z\u00C0-\u024F\s]+?)\s*(\d+):(\d+)(?:\s*-\s*(\d+))?$/i);
+	if (verseMatch) {
+		const book = verseMatch[1].trim();
+		const chapter = parseInt(verseMatch[2]);
+		const startVerse = parseInt(verseMatch[3]);
+		const endVerse = verseMatch[4] ? parseInt(verseMatch[4]) : startVerse;
+		return { book, chapter, startVerse, endVerse, isValid: true };
+	}
+
+	const chapterMatch = trimmed.match(/^([1-3]?\s*[a-zA-Z\u00C0-\u024F\s]+?)\s*(\d+)$/i);
+	if (chapterMatch) {
+		const book = chapterMatch[1].trim();
+		const chapter = parseInt(chapterMatch[2]);
+		return { book, chapter, startVerse: 1, endVerse: 150, isValid: true };
+	}
+
+	return null;
+}
+
+interface ReferenceActionSuggestion {
+	action: "open" | "copy" | "insert_link" | "insert_text";
+	book: string;
+	chapter: number;
+	startVerse: number;
+	endVerse?: number;
+	displayText: string;
+	referenceLabel: string;
+}
+
+class QuickReferenceModal extends SuggestModal<ReferenceActionSuggestion> {
+	plugin: BibleSidecarPlugin;
+	editor?: Editor;
+
+	constructor(app: App, plugin: BibleSidecarPlugin, editor?: Editor) {
+		super(app);
+		this.plugin = plugin;
+		this.editor = editor;
+		this.setPlaceholder("Search for a verse (e.g., John 3:16 or John 3)...");
+	}
+
+	getSuggestions(query: string): ReferenceActionSuggestion[] {
+		const parsed = parseQuickReference(query);
+		if (!parsed) {
+			return [];
+		}
+
+		const refLabel = parsed.startVerse === 1 && parsed.endVerse === 150
+			? `${parsed.book} ${parsed.chapter}`
+			: `${parsed.book} ${parsed.chapter}:${parsed.startVerse}${parsed.endVerse !== parsed.startVerse ? "-" + parsed.endVerse : ""}`;
+
+		const suggestions: ReferenceActionSuggestion[] = [
+			{
+				action: "open",
+				book: parsed.book,
+				chapter: parsed.chapter,
+				startVerse: parsed.startVerse,
+				endVerse: parsed.endVerse,
+				displayText: `👉 Open "${refLabel}" in Sidecar`,
+				referenceLabel: refLabel
+			},
+			{
+				action: "copy",
+				book: parsed.book,
+				chapter: parsed.chapter,
+				startVerse: parsed.startVerse,
+				endVerse: parsed.endVerse,
+				displayText: `📋 Copy "${refLabel}" Text`,
+				referenceLabel: refLabel
+			}
+		];
+
+		const activeLeaf = this.app.workspace.getActiveViewOfType(MarkdownView);
+		const currentEditor = this.editor || (activeLeaf ? activeLeaf.editor : undefined);
+
+		if (currentEditor) {
+			suggestions.push(
+				{
+					action: "insert_link",
+					book: parsed.book,
+					chapter: parsed.chapter,
+					startVerse: parsed.startVerse,
+					endVerse: parsed.endVerse,
+					displayText: `🔗 Insert Link to "${refLabel}"`,
+					referenceLabel: refLabel
+				},
+				{
+					action: "insert_text",
+					book: parsed.book,
+					chapter: parsed.chapter,
+					startVerse: parsed.startVerse,
+					endVerse: parsed.endVerse,
+					displayText: `✍️ Insert Scripture text for "${refLabel}"`,
+					referenceLabel: refLabel
+				}
+			);
+		}
+
+		return suggestions;
+	}
+
+	renderSuggestion(suggestion: ReferenceActionSuggestion, el: HTMLElement): void {
+		el.createEl("div", { text: suggestion.displayText });
+	}
+
+	async onChooseSuggestion(suggestion: ReferenceActionSuggestion, evt: MouseEvent | KeyboardEvent): Promise<void> {
+		const { action, book, chapter, startVerse, endVerse, referenceLabel } = suggestion;
+
+		const activeLeaf = this.app.workspace.getActiveViewOfType(MarkdownView);
+		const currentEditor = this.editor || (activeLeaf ? activeLeaf.editor : undefined);
+
+		if (action === "open") {
+			await (this.plugin as any).toggleBibleSidecarView();
+			setTimeout(async () => {
+				const view = (this.plugin as any).view;
+				if (view && typeof view.navigateToPassage === "function") {
+					const endV = (startVerse === 1 && endVerse === 150) ? undefined : endVerse;
+					const startV = (startVerse === 1 && endVerse === 150) ? 1 : startVerse;
+					await view.navigateToPassage(book, chapter, startV, endV);
+				}
+			}, 200);
+		} else if (action === "copy") {
+			new Notice(`Fetching "${referenceLabel}"...`);
+			const res = await this.plugin.fetchScriptureRange(book, chapter, startVerse, endVerse);
+			if (res && res.versesList.length > 0) {
+				const output = this.plugin.compileReferenceOutput(book, chapter, res.versesList, this.plugin.settings);
+				await copyToClipboard(output);
+				new Notice(`Copied "${referenceLabel}" to clipboard!`);
+			} else {
+				new Notice(`Failed to fetch scripture for "${referenceLabel}".`);
+			}
+		} else if (action === "insert_link") {
+			if (currentEditor) {
+				const rangeStr = (startVerse === 1 && endVerse === 150)
+					? ""
+					: (startVerse === endVerse ? `:${startVerse}` : `:${startVerse}-${endVerse}`);
+				const verseVal = (startVerse === 1 && endVerse === 150)
+					? "1"
+					: expandRange(startVerse.toString(), endVerse?.toString());
+				const uri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${chapter}&verse=${verseVal}`;
+				
+				let referenceText = "";
+				if (this.plugin.settings.verseReferenceInternalLinking) {
+					referenceText = `[[${book}]] [${chapter}${rangeStr}](${uri})`;
+				} else {
+					referenceText = `[${book} ${chapter}${rangeStr}](${uri})`;
+				}
+				currentEditor.replaceSelection(referenceText);
+			}
+		} else if (action === "insert_text") {
+			if (currentEditor) {
+				new Notice(`Fetching "${referenceLabel}"...`);
+				const res = await this.plugin.fetchScriptureRange(book, chapter, startVerse, endVerse);
+				if (res && res.versesList.length > 0) {
+					const output = this.plugin.compileReferenceOutput(book, chapter, res.versesList, this.plugin.settings);
+					currentEditor.replaceSelection(output);
+				} else {
+					new Notice(`Failed to fetch scripture for "${referenceLabel}".`);
+				}
+			}
+		}
 	}
 }

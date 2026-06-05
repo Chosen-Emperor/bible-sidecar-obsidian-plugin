@@ -163,6 +163,8 @@ export class BibleView extends ItemView {
 	private otCollapsed: boolean = false;
 	private ntCollapsed: boolean = false;
 	private strongsDefinitionCache: Map<string, any> = new Map();
+	tapSelectMode = false;
+	selectedVersesForAnnotation = new Set<string>();
 
 
 	saveCurrentScrollPosition() {
@@ -237,6 +239,7 @@ export class BibleView extends ItemView {
 			else if (iconId === "chevron-up") el.setText("▲");
 			else if (iconId === "copy") el.setText("📋");
 			else if (iconId === "pencil") el.setText("🖌");
+			else if (iconId === "highlighter") el.setText("🖍");
 			else if (iconId === "wifi-off") el.setText("🔌");
 			else if (iconId === "loader") el.setText("⏳");
 			return;
@@ -270,6 +273,8 @@ export class BibleView extends ItemView {
 			else if (iconId === "chevron-down") el.setText("▼");
 			else if (iconId === "chevron-up") el.setText("▲");
 			else if (iconId === "copy") el.setText("📋");
+			else if (iconId === "pencil") el.setText("🖌");
+			else if (iconId === "highlighter") el.setText("🖍");
 			else if (iconId === "wifi-off") el.setText("🔌");
 			else if (iconId === "loader") el.setText("⏳");
 		}
@@ -1245,6 +1250,24 @@ export class BibleView extends ItemView {
 			// Right side controls: Prev & Next Chapter!
 			const rightControls = header.createDiv({ cls: "bible-header-right-controls" });
 			
+			const selectModeBtn = rightControls.createEl("button", {
+				cls: "bible-icon-btn bible-select-mode-btn",
+				attr: { "aria-label": "Toggle Select Mode", "title": "Toggle Select Mode" }
+			});
+			this.safeSetIcon(selectModeBtn, "highlighter");
+			if (this.tapSelectMode) {
+				selectModeBtn.classList.add("is-active");
+			}
+			selectModeBtn.addEventListener("click", (e) => {
+				e.stopPropagation();
+				this.tapSelectMode = !this.tapSelectMode;
+				selectModeBtn.classList.toggle("is-active", this.tapSelectMode);
+				if (!this.tapSelectMode) {
+					this.clearSelectedVerses();
+				}
+				new Notice(this.tapSelectMode ? "Tap-to-Select Mode enabled. Tap verses to highlight." : "Tap-to-Select Mode disabled.");
+			});
+			
 			const prevBtn = rightControls.createEl("button", {
 				cls: "bible-icon-btn",
 				attr: { "aria-label": "Previous Chapter", "title": "Previous Chapter" }
@@ -1413,12 +1436,58 @@ export class BibleView extends ItemView {
 			});
 		}
 
+		// Swipe Gestures for Chapter Navigation
+		let touchStartX = 0;
+		let touchStartY = 0;
+		chapterContainer.addEventListener("touchstart", (e) => {
+			touchStartX = e.changedTouches[0].screenX;
+			touchStartY = e.changedTouches[0].screenY;
+		}, { passive: true });
+
+		chapterContainer.addEventListener("touchend", (e) => {
+			const touchEndX = e.changedTouches[0].screenX;
+			const touchEndY = e.changedTouches[0].screenY;
+			const diffX = touchEndX - touchStartX;
+			const diffY = touchEndY - touchStartY;
+
+			if (Math.abs(diffX) > 80 && Math.abs(diffY) < 40) {
+				if (diffX > 0) {
+					const prevBtnEl = wrapper?.querySelector('[aria-label="Previous Chapter"]') as HTMLElement;
+					if (prevBtnEl && !prevBtnEl.hasAttribute("disabled")) {
+						prevBtnEl.click();
+					}
+				} else {
+					const nextBtnEl = wrapper?.querySelector('[aria-label="Next Chapter"]') as HTMLElement;
+					if (nextBtnEl && !nextBtnEl.hasAttribute("disabled")) {
+						nextBtnEl.click();
+					}
+				}
+			}
+		}, { passive: true });
+
 		const separate = this.settings.separateVersesSidecar !== false;
 
 		const chapterContent = chapterContainer.createEl("div", {
 			cls: separate ? "chapter-content" : "chapter-content inline-layout",
 		});
 		chapterContent.empty();
+
+		chapterContent.addEventListener("click", (e) => {
+			if (!this.tapSelectMode) return;
+			
+			const target = e.target as HTMLElement;
+			if (target.closest("button") || target.closest(".bible-verse-note-indicator")) return;
+
+			const verseEl = target.closest(".verse, .verse-inline") as HTMLElement;
+			if (verseEl) {
+				e.stopPropagation();
+				e.preventDefault();
+				const vNum = verseEl.getAttribute("data-verse");
+				if (vNum) {
+					this.toggleVerseSelection(verseEl, vNum);
+				}
+			}
+		}, true);
 
 		if (this.settings.parallelEnabled && this.settings.secondaryBibleVersion) {
 			// ── PARALLEL VIEW (Supports both Bolls.life and Premium APIs) ────────
@@ -2844,6 +2913,128 @@ export class BibleView extends ItemView {
 				this.applySavedHighlights(container, bookName, chapter);
 			}
 		}).open();
+	}
+
+	toggleVerseSelection(verseEl: HTMLElement, verseNum: string) {
+		if (this.selectedVersesForAnnotation.has(verseNum)) {
+			this.selectedVersesForAnnotation.delete(verseNum);
+			verseEl.classList.remove("is-selected-for-annotation");
+		} else {
+			this.selectedVersesForAnnotation.add(verseNum);
+			verseEl.classList.add("is-selected-for-annotation");
+		}
+
+		this.updateMobileSelectionToolbar();
+	}
+
+	updateMobileSelectionToolbar() {
+		let toolbar = document.querySelector(".mobile-annotation-toolbar") as HTMLElement;
+		if (this.selectedVersesForAnnotation.size === 0) {
+			if (toolbar) toolbar.remove();
+			return;
+		}
+
+		if (!toolbar) {
+			toolbar = document.createElement("div");
+			toolbar.className = "mobile-annotation-toolbar";
+			document.body.appendChild(toolbar);
+		}
+
+		toolbar.empty();
+		
+		toolbar.createDiv({ cls: "mobile-annotation-toolbar-title", text: `${this.selectedVersesForAnnotation.size} selected` });
+
+		const colors = ["yellow", "green", "blue", "pink"];
+		colors.forEach(color => {
+			const btn = toolbar.createEl("button", { cls: `color-dot bg-${color}` });
+			btn.addEventListener("click", async (e) => {
+				e.stopPropagation();
+				await this.applyMobileHighlights(color);
+			});
+		});
+
+		const clearBtn = toolbar.createEl("button", { cls: "clear-dot", text: "✖" });
+		clearBtn.addEventListener("click", async (e) => {
+			e.stopPropagation();
+			await this.applyMobileHighlights(null);
+		});
+
+		const noteBtn = toolbar.createEl("button", { cls: "note-dot", text: "📝" });
+		noteBtn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			this.showMobileNotePrompt();
+		});
+	}
+
+	async applyMobileHighlights(color: string | null) {
+		if (this.selectedVersesForAnnotation.size === 0 || !this.activeBook || !this.activeChapterNumber) return;
+
+		const sorted = Array.from(this.selectedVersesForAnnotation).map(Number).sort((a, b) => a - b);
+		const ranges: string[] = [];
+		let start = sorted[0];
+		let prev = sorted[0];
+
+		for (let i = 1; i < sorted.length; i++) {
+			if (sorted[i] === prev + 1) {
+				prev = sorted[i];
+			} else {
+				ranges.push(start === prev ? start.toString() : `${start}-${prev}`);
+				start = sorted[i];
+				prev = sorted[i];
+			}
+		}
+		ranges.push(start === prev ? start.toString() : `${start}-${prev}`);
+
+		const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
+		
+		for (const rangeStr of ranges) {
+			const els: HTMLElement[] = [];
+			if (rangeStr.includes("-")) {
+				const [s, e] = rangeStr.split("-").map(Number);
+				for (let v = s; v <= e; v++) {
+					const rawEls = Array.from(container.querySelectorAll(`[data-verse="${v}"]`)) as HTMLElement[];
+					els.push(...rawEls);
+				}
+			} else {
+				const rawEls = Array.from(container.querySelectorAll(`[data-verse="${rangeStr}"]`)) as HTMLElement[];
+				els.push(...rawEls);
+			}
+			
+			await this.applyHighlight(els, this.activeBook.name, this.activeChapterNumber, rangeStr, color);
+		}
+
+		this.clearSelectedVerses();
+	}
+
+	showMobileNotePrompt() {
+		if (this.selectedVersesForAnnotation.size === 0 || !this.activeBook || !this.activeChapterNumber) return;
+
+		const sorted = Array.from(this.selectedVersesForAnnotation).map(Number).sort((a, b) => a - b);
+		const first = sorted[0];
+		const last = sorted[sorted.length - 1];
+		const rangeStr = first === last ? first.toString() : `${first}-${last}`;
+
+		const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
+		const els: HTMLElement[] = [];
+		for (let v = first; v <= last; v++) {
+			const rawEls = Array.from(container.querySelectorAll(`[data-verse="${v}"]`)) as HTMLElement[];
+			els.push(...rawEls);
+		}
+
+		this.clearSelectedVerses();
+		this.showNotePrompt(els, this.activeBook.name, this.activeChapterNumber, rangeStr);
+	}
+
+	clearSelectedVerses() {
+		const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
+		if (container) {
+			container.querySelectorAll(".is-selected-for-annotation").forEach(el => {
+				el.classList.remove("is-selected-for-annotation");
+			});
+		}
+		this.selectedVersesForAnnotation.clear();
+		const toolbar = document.querySelector(".mobile-annotation-toolbar") as HTMLElement;
+		if (toolbar) toolbar.remove();
 	}
 }
 
