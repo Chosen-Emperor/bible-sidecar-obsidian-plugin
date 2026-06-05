@@ -71,6 +71,18 @@ Follow these steps to build and modify the plugin locally:
    npm run build
    ```
 
+### 🏛️ System Architecture & Onboarding
+
+This codebase utilizes a centralized **Architectural Meta-Repository** inside the [.meta/](file:///c:/Users/rayni/Documents/bible-sidecar-plus/.meta/) directory. 
+
+Before making any modifications or proposing new features:
+1. Review the high-level architecture: [.meta/overview.md](file:///c:/Users/rayni/Documents/bible-sidecar-plus/.meta/overview.md)
+2. Understand execution flows: [.meta/data_flow.md](file:///c:/Users/rayni/Documents/bible-sidecar-plus/.meta/data_flow.md)
+3. Study previous technical decisions: [.meta/architectural_decisions.md](file:///c:/Users/rayni/Documents/bible-sidecar-plus/.meta/architectural_decisions.md)
+4. Check constraints & rules: [.meta/constraints_and_rules.md](file:///c:/Users/rayni/Documents/bible-sidecar-plus/.meta/constraints_and_rules.md)
+
+All future AI agents and contributors must follow the structured **onboarding checklist** in [.meta/instructions.md](file:///c:/Users/rayni/Documents/bible-sidecar-plus/.meta/instructions.md) before pushing code.
+
 ---
 
 ## 🤝 Contributing

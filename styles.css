@@ -1251,3 +1251,326 @@ body.bible-hide-link-icons a.external-link[href^="obsidian://bible"] svg {
     opacity: 1;
     transform: scale(1.2);
 }
+
+/* ===========================================
+   ROUND 2: Search Term Match Highlighting
+   =========================================== */
+
+mark.search-match {
+    background-color: rgba(255, 213, 0, 0.35);
+    color: inherit;
+    border-radius: 3px;
+    padding: 1px 2px;
+    font-weight: 600;
+}
+
+/* ===========================================
+   ROUND 2: Parallel Translation View
+   =========================================== */
+
+/* Desktop: side-by-side columns inside .chapter-content */
+.parallel-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    width: 100%;
+}
+
+.chapter-column {
+    min-width: 0; /* prevent grid blowout */
+    overflow-y: visible;
+}
+
+.chapter-column-header {
+    font-size: var(--font-ui-smaller);
+    font-weight: 700;
+    color: var(--text-accent);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--sidecar-border);
+}
+
+/* Mobile / narrow panel: single column with tab switcher */
+.parallel-tab-bar {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.parallel-tab-btn {
+    flex: 1;
+    background-color: var(--background-primary);
+    border: 1px solid var(--sidecar-border);
+    color: var(--text-muted);
+    border-radius: var(--sidecar-radius);
+    padding: 5px 8px;
+    font-size: var(--font-ui-smaller);
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--sidecar-transition);
+    text-align: center;
+}
+
+.parallel-tab-btn.active {
+    color: var(--text-on-accent, var(--background-primary));
+    background-color: var(--interactive-accent);
+    border-color: var(--interactive-accent);
+}
+
+/* Verse alignment hint — subtle divider between parallel columns */
+.parallel-container .verse,
+.parallel-container .verse-inline {
+    border-bottom: 1px dashed var(--sidecar-border);
+    padding-bottom: 4px;
+    margin-bottom: 4px;
+}
+
+/* ===========================================
+   ROUND 2: Cross-Reference Markers
+   =========================================== */
+
+/* Superscript letter marker inline within verse text */
+.cross-ref-marker {
+    display: inline-block;
+    position: relative;
+    font-size: 0.7em;
+    vertical-align: super;
+    color: var(--interactive-accent);
+    cursor: pointer;
+    margin: 0 1px;
+    font-style: italic;
+    transition: var(--sidecar-transition);
+}
+
+.cross-ref-marker:hover {
+    color: var(--text-accent);
+}
+
+/* Desktop tooltip — shown on hover */
+.cross-ref-marker::after {
+    content: attr(data-refs-display);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: var(--background-secondary);
+    color: var(--text-normal);
+    border: 1px solid var(--sidecar-border);
+    border-radius: var(--sidecar-radius);
+    padding: 6px 10px;
+    font-size: var(--font-ui-smaller);
+    font-style: normal;
+    font-weight: 400;
+    white-space: nowrap;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    transform: translateX(-50%) translateY(4px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    z-index: 100;
+}
+
+.cross-ref-marker:hover::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+/* Mobile slide-up cross-reference drawer */
+.cross-ref-drawer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background-color: var(--background-primary);
+    border-top: 1px solid var(--sidecar-border);
+    border-radius: 12px 12px 0 0;
+    padding: 20px 20px 32px 20px;
+    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.15);
+    z-index: 500;
+    transform: translateY(100%);
+    transition: transform 0.28s cubic-bezier(0.25, 0.8, 0.25, 1);
+    max-height: 50vh;
+    overflow-y: auto;
+}
+
+.cross-ref-drawer.is-open {
+    transform: translateY(0);
+}
+
+.cross-ref-drawer-handle {
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background-color: var(--background-modifier-border);
+    margin: 0 auto 14px auto;
+}
+
+.cross-ref-drawer-title {
+    font-size: var(--font-ui-small);
+    font-weight: 700;
+    color: var(--text-accent);
+    margin-bottom: 10px;
+}
+
+.cross-ref-drawer-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.cross-ref-drawer-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background-color: var(--background-secondary);
+    border: 1px solid var(--sidecar-border);
+    border-radius: var(--sidecar-radius);
+    cursor: pointer;
+    font-size: var(--font-normal);
+    color: var(--text-normal);
+    transition: var(--sidecar-transition);
+}
+
+.cross-ref-drawer-item:hover,
+.cross-ref-drawer-item:active {
+    border-color: var(--interactive-accent);
+    background-color: var(--sidecar-hover-bg);
+}
+
+/* ===========================================
+   ROUND 2: Strong's Concordance
+   =========================================== */
+
+/* Words with a Strong's ID — dashed underline */
+.strongs-word {
+    text-decoration-line: underline;
+    text-decoration-style: dashed;
+    text-decoration-color: var(--text-muted);
+    text-underline-offset: 3px;
+    cursor: pointer;
+    transition: var(--sidecar-transition);
+}
+
+.strongs-word:hover {
+    text-decoration-color: var(--interactive-accent);
+    color: var(--text-accent);
+}
+
+/* Strong's definition slide-in panel (right side, inside sidecar) */
+.strongs-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 280px;
+    max-width: 90vw;
+    background-color: var(--background-primary);
+    border-left: 1px solid var(--sidecar-border);
+    box-shadow: -4px 0 24px rgba(0, 0, 0, 0.12);
+    z-index: 400;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 0.28s cubic-bezier(0.25, 0.8, 0.25, 1);
+    overflow-y: auto;
+}
+
+.strongs-panel.is-open {
+    transform: translateX(0);
+}
+
+.strongs-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px;
+    border-bottom: 1px solid var(--sidecar-border);
+    background-color: var(--background-secondary);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.strongs-panel-id {
+    font-size: var(--font-ui-smaller);
+    font-weight: 700;
+    color: var(--interactive-accent);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.strongs-panel-close {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 18px;
+    padding: 4px;
+    line-height: 1;
+    border-radius: 4px;
+    transition: var(--sidecar-transition);
+}
+
+.strongs-panel-close:hover {
+    color: var(--text-normal);
+    background-color: var(--background-modifier-hover);
+}
+
+.strongs-definition-card {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.strongs-word-heading {
+    font-size: 1.3em;
+    font-weight: 700;
+    color: var(--text-normal);
+    direction: auto; /* supports Hebrew RTL */
+    unicode-bidi: plaintext;
+}
+
+.strongs-transliteration {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.strongs-part-of-speech {
+    display: inline-block;
+    font-size: var(--font-ui-smaller);
+    font-weight: 600;
+    color: var(--text-on-accent, var(--background-primary));
+    background-color: var(--interactive-accent);
+    border-radius: 10px;
+    padding: 2px 8px;
+    width: fit-content;
+}
+
+.strongs-definition {
+    font-size: var(--font-normal);
+    line-height: 1.6;
+    color: var(--text-normal);
+    border-left: 3px solid var(--interactive-accent);
+    padding-left: 12px;
+    margin: 4px 0;
+}
+
+.strongs-loading,
+.strongs-error {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    padding: 20px 16px;
+    text-align: center;
+}
+
+.strongs-error {
+    color: var(--text-error, #e74c3c);
+}

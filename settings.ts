@@ -853,6 +853,83 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 					});
 			});
 
+		// ─── Study Tools Section ───────────────────────────────────────────────
+		containerEl.createEl("hr", { cls: "bible-settings-divider" });
+
+		new Setting(containerEl)
+			.setName("Study Tools")
+			.setHeading();
+
+		// Parallel translation toggle
+		let secondaryVersionSetting: Setting;
+
+		new Setting(containerEl)
+			.setName("Parallel translation view")
+			.setDesc("Show a second Bible translation alongside the primary one. When the panel is narrow (< 480px), tabs replace the side-by-side layout.")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.parallelEnabled)
+					.onChange((value) => {
+						this.plugin.settings.parallelEnabled = value;
+						this.plugin.saveSettings();
+						secondaryVersionSetting.settingEl.style.display = value ? "flex" : "none";
+					});
+			});
+
+		// Secondary version dropdown (visible only when parallel is enabled)
+		secondaryVersionSetting = new Setting(containerEl)
+			.setName("Secondary Bible version")
+			.setDesc("The version displayed in the second column (Bolls.life translations only).")
+			.addText((text) => {
+				text
+					.setPlaceholder("e.g. KJV, NKJV, WEB")
+					.setValue(this.plugin.settings.secondaryBibleVersion || "KJV")
+					.onChange((value) => {
+						this.plugin.settings.secondaryBibleVersion = value.trim() || "KJV";
+						this.plugin.saveSettings();
+					});
+			});
+		secondaryVersionSetting.settingEl.style.display =
+			this.plugin.settings.parallelEnabled ? "flex" : "none";
+
+		// Cross-references toggle
+		new Setting(containerEl)
+			.setName("Show cross-references")
+			.setDesc("Display superscript letter markers next to words in ESV and API.Bible chapters. Hover (desktop) or tap (mobile) to see related passages.")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.showCrossReferences)
+					.onChange((value) => {
+						this.plugin.settings.showCrossReferences = value;
+						this.plugin.saveSettings();
+					});
+			});
+
+		// Strong's numbers toggle (KJV / Bolls.life only)
+		const isKjvCompatible = ["KJV", "YLT", "NKJV"].includes(
+			(this.plugin.settings.bibleVersion || "").toUpperCase()
+		);
+		const strongsSetting = new Setting(containerEl)
+			.setName("Show Strong's concordance numbers")
+			.setDesc(
+				isKjvCompatible
+					? "Underline words with Strong's IDs in KJV and other Bolls.life translations. Click any underlined word to look up its Hebrew or Greek definition."
+					: "⚠️ Strong's numbers are only available for KJV and compatible Bolls.life translations. Switch your primary version to KJV to enable this feature."
+			)
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.showStrongsNumbers && isKjvCompatible)
+					.setDisabled(!isKjvCompatible)
+					.onChange((value) => {
+						if (!isKjvCompatible) return;
+						this.plugin.settings.showStrongsNumbers = value;
+						this.plugin.saveSettings();
+					});
+			});
+		if (!isKjvCompatible) {
+			strongsSetting.settingEl.style.opacity = "0.55";
+		}
+
 		containerEl.createEl("hr", { cls: "bible-settings-divider" });
 
 		new Setting(containerEl)

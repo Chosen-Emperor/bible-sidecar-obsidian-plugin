@@ -1,5 +1,5 @@
 import { ItemView, WorkspaceLeaf, requestUrl, Notice, Platform, setIcon, Modal, Setting, App } from "obsidian";
-import { convertToSuperscript, convertToNumber, compileCopyMessage, copyToClipboard, BIBLE_BOOK_IDS, isNavigationAllowedOffline, calculateDownloadProportion, isOldTestament, getBookDisplayName, searchBibleLocalData, updateAnnotationsData } from "./utils";
+import { convertToSuperscript, convertToNumber, compileCopyMessage, copyToClipboard, BIBLE_BOOK_IDS, isNavigationAllowedOffline, calculateDownloadProportion, isOldTestament, getBookDisplayName, searchBibleLocalData, updateAnnotationsData, highlightSearchTerms, parseAdvancedSearchQuery, renderStrongsHtml, extractCrossReferences } from "./utils";
 
 function colorGospelQuotesRedInDOM(node: Node, state = { inQuote: false }) {
 	if (node.nodeType === Node.TEXT_NODE) {
@@ -162,6 +162,7 @@ export class BibleView extends ItemView {
 	private savedScrollPositions: Record<string, number> = {};
 	private otCollapsed: boolean = false;
 	private ntCollapsed: boolean = false;
+	private strongsDefinitionCache: Map<string, any> = new Map();
 
 
 	saveCurrentScrollPosition() {
@@ -1419,6 +1420,12 @@ export class BibleView extends ItemView {
 		});
 		chapterContent.empty();
 
+		if (this.settings.parallelEnabled && this.settings.secondaryBibleVersion) {
+			// ── PARALLEL VIEW (Supports both Bolls.life and Premium APIs) ────────
+			await this.renderParallelColumns(chapter, chapterContainer, chapterContent, book, i, books);
+			return; // renderParallelColumns handles applySavedHighlights internally
+		}
+
 		if (chapter && ((chapter as any).isApiBible || (chapter as any).isEsvApi)) {
 			const rawHtml = (chapter as any).html;
 			const isEsv = (chapter as any).isEsvApi;
@@ -1525,7 +1532,39 @@ export class BibleView extends ItemView {
 						e.stopPropagation();
 						this.showHighlightToolbar(e, formattedVerse, book.name, i, verseNum);
 					});
+
+					// Cross-references (ESV + API.Bible) — inject <sup> markers
+					if (this.settings.showCrossReferences) {
+						const rawHtmlForCrossRef = (chapter as any).html || "";
+						const crossRefs = extractCrossReferences(rawHtmlForCrossRef);
+						if (crossRefs.length > 0) {
+							for (const cr of crossRefs) {
+								if (cr.refs.length === 0) continue;
+								const sup = formattedVerse.createEl("sup", {
+									cls: "cross-ref-marker",
+									text: cr.letter,
+									attr: { "data-refs-display": cr.refs.join(" · ") }
+								});
+								sup.addEventListener("click", (e) => {
+									e.stopPropagation();
+									if (Platform.isMobile) {
+										this.renderCrossRefDrawer(cr.refs, book.name, i);
+									}
+								});
+							}
+						}
+					}
 				});
+				// Strong's word click handler — after all verse elements are rendered
+				if (this.settings.showStrongsNumbers) {
+					chapterContent.querySelectorAll(".strongs-word").forEach((el: HTMLElement) => {
+						el.addEventListener("click", (e) => {
+							e.stopPropagation();
+							const id = el.getAttribute("data-strongs");
+							if (id) this.renderStrongsPanel(id);
+						});
+					});
+				}
 			} else {
 				// Clean the inline raw HTML of wrapper headings/copyright
 				const tempDiv = document.createElement("div");
@@ -1652,6 +1691,11 @@ export class BibleView extends ItemView {
 					let displayHtml = verse.text.replace(/^\d+:\d+\s*/, "");
 					const cleanText = displayHtml.replace(/<br\s*\/?>/gi, " ").replace(/<[^>]*>?/gm, "");
 
+					// Strong's concordance — KJV/Bolls.life only
+					if (this.settings.showStrongsNumbers && (displayHtml.includes("<H") || displayHtml.includes("<S") || displayHtml.includes("<G"))) {
+						displayHtml = renderStrongsHtml(displayHtml, book.bookid >= 40);
+					}
+
 					if (this.settings.gospelQuotesRed && ["matthew", "mark", "luke", "john"].includes(book.name.toLowerCase())) {
 						displayHtml = displayHtml
 							.replace(/"([^"]+)"/g, '"<span style="color: red;">$1</span>"')
@@ -1723,6 +1767,9 @@ export class BibleView extends ItemView {
 					const formattedVerseNumber = convertToSuperscript(verse.verse);
 
 					let displayHtml = verse.text.replace(/^\d+:\d+\s*/, "");
+					if (this.settings.showStrongsNumbers && (displayHtml.includes("<H") || displayHtml.includes("<S") || displayHtml.includes("<G"))) {
+						displayHtml = renderStrongsHtml(displayHtml, book.bookid >= 40);
+					}
 					if (this.settings.gospelQuotesRed && ["matthew", "mark", "luke", "john"].includes(book.name.toLowerCase())) {
 						displayHtml = displayHtml
 							.replace(/"([^"]+)"/g, '"<span style="color: red;">$1</span>"')
@@ -1733,6 +1780,17 @@ export class BibleView extends ItemView {
 				}
 				chapterContent.innerHTML = inlineHTML;
 			}
+		}
+
+		// Strong's word click handler (Bolls separate and inline paths)
+		if (this.settings.showStrongsNumbers) {
+			chapterContent.querySelectorAll(".strongs-word").forEach((el: HTMLElement) => {
+				el.addEventListener("click", (e) => {
+					e.stopPropagation();
+					const id = el.getAttribute("data-strongs");
+					if (id) this.renderStrongsPanel(id);
+				});
+			});
 		}
 		
 		chapterContent.addEventListener("copy", (e: ClipboardEvent) => {
@@ -1885,6 +1943,312 @@ export class BibleView extends ItemView {
 			}, 50);
 		});
 	}
+
+	/**
+	 * Renders a mobile bottom-drawer showing cross-reference passages for a clicked
+	 * cross-reference marker. Each reference is a tappable card that navigates to that passage.
+	 */
+	renderCrossRefDrawer(refs: string[], bookName: string, chapter: number) {
+		const existing = document.querySelector(".cross-ref-drawer");
+		if (existing) existing.remove();
+
+		const drawer = document.createElement("div");
+		drawer.className = "cross-ref-drawer";
+
+		const handle = drawer.createDiv({ cls: "cross-ref-drawer-handle" });
+		const title = drawer.createDiv({ cls: "cross-ref-drawer-title", text: "Cross References" });
+		const list = drawer.createDiv({ cls: "cross-ref-drawer-list" });
+
+		for (const ref of refs) {
+			const item = list.createDiv({ cls: "cross-ref-drawer-item", text: ref });
+			item.addEventListener("click", async () => {
+				drawer.remove();
+				// Parse "Book Chapter:Verse" e.g. "Rom 5:8"
+				const m = ref.match(/^(.+?)\s+(\d+):(\d+)/);
+				if (m) {
+					await this.navigateToPassage(m[1], parseInt(m[2]), parseInt(m[3]));
+				}
+			});
+		}
+
+		document.body.appendChild(drawer);
+		requestAnimationFrame(() => drawer.classList.add("is-open"));
+
+		const clickAway = (e: MouseEvent) => {
+			if (!drawer.contains(e.target as Node)) {
+				drawer.classList.remove("is-open");
+				setTimeout(() => drawer.remove(), 300);
+				document.removeEventListener("mousedown", clickAway);
+			}
+		};
+		document.addEventListener("mousedown", clickAway);
+	}
+
+	/**
+	 * Fetches a Strong's concordance definition from the Bible Hub API (online only)
+	 * and renders it in a slide-in panel anchored to the right side of the view.
+	 * Caches results in `strongsDefinitionCache` to avoid repeated network calls.
+	 */
+	async renderStrongsPanel(strongsId: string) {
+		const existing = document.querySelector(".strongs-panel");
+		if (existing) existing.remove();
+
+		const panel = document.createElement("div");
+		panel.className = "strongs-panel";
+
+		const header = panel.createDiv({ cls: "strongs-panel-header" });
+		header.createSpan({ cls: "strongs-panel-id", text: strongsId });
+
+		const closeBtn = header.createEl("button", { cls: "strongs-panel-close", text: "✕" });
+		closeBtn.addEventListener("click", () => {
+			panel.classList.remove("is-open");
+			setTimeout(() => panel.remove(), 300);
+		});
+
+		const body = panel.createDiv({ cls: "strongs-definition-card" });
+		body.createDiv({ cls: "strongs-loading", text: "Loading definition…" });
+
+		document.body.appendChild(panel);
+		requestAnimationFrame(() => panel.classList.add("is-open"));
+
+		try {
+			let data: any;
+			if (this.strongsDefinitionCache.has(strongsId)) {
+				data = this.strongsDefinitionCache.get(strongsId);
+			} else {
+				const lang = strongsId.startsWith("H") ? "hebrew" : "greek";
+				const num = strongsId.slice(1);
+				const response = await requestUrl(`https://api.biblehub.com/strongs/${lang}/${num}`);
+				if (response.status !== 200) throw new Error(`HTTP ${response.status}`);
+				data = response.json;
+				this.strongsDefinitionCache.set(strongsId, data);
+			}
+
+			body.empty();
+			const word = data?.word || data?.translit || strongsId;
+			body.createDiv({ cls: "strongs-word-heading", text: word });
+			if (data?.translit && data.translit !== word) {
+				body.createDiv({ cls: "strongs-transliteration", text: data.translit });
+			}
+			if (data?.pos) {
+				body.createDiv({ cls: "strongs-part-of-speech", text: data.pos });
+			}
+			const defText = data?.definition || data?.meaning || data?.kjv_def || "No definition found.";
+			body.createDiv({ cls: "strongs-definition", text: defText });
+		} catch (err) {
+			body.empty();
+			body.createDiv({ cls: "strongs-error", text: `Unable to load definition for ${strongsId}. Please check your internet connection.` });
+			this.logDebug(`Strong's fetch failed for ${strongsId}: ${err.message || err}`);
+		}
+	}
+
+	/**
+	 * Normalizes chapter content from either Bolls.life array or Premium API html into a standard
+	 * array of verse objects.
+	 */
+	normalizeChapterToVerses(chapterData: any): { verse: string; text: string }[] {
+		if (!chapterData) return [];
+		if (Array.isArray(chapterData)) {
+			return chapterData.map(v => ({ verse: v.verse.toString(), text: v.text }));
+		}
+		
+		if (chapterData.isEsvApi || chapterData.isApiBible) {
+			const rawHtml = chapterData.html;
+			const isEsv = chapterData.isEsvApi;
+			const parser = new DOMParser();
+			const doc = parser.parseFromString(rawHtml, "text/html");
+			doc.querySelectorAll(".extra_text, .audio, .copyright, .mp3link").forEach(el => el.remove());
+
+			const spans = doc.querySelectorAll(isEsv ? "b.verse-num, b.chapter-num, span.chapter-num" : "span.v");
+			const parsed: { verse: string; text: string }[] = [];
+			spans.forEach((span) => {
+				let verseNumText = isEsv ? (span.textContent?.trim() || "") : (span.getAttribute("data-number") || span.textContent || "");
+				if (isEsv) {
+					if (verseNumText.includes(":")) {
+						verseNumText = verseNumText.split(":")[1];
+					} else if (span.classList.contains("chapter-num") || (span.tagName.toLowerCase() === "span" && span.classList.contains("chapter-num"))) {
+						verseNumText = "1";
+					}
+				}
+				const verseNum = verseNumText.trim();
+				if (!verseNum) return;
+
+				let text = "";
+				let next = span.nextSibling;
+				const verseClass = isEsv ? "verse-num" : "v";
+				if (!next && !isEsv && span.parentElement && span.parentElement.classList.contains("verse-span")) {
+					next = span.parentElement.nextSibling;
+				}
+				while (next && !(next instanceof Element && (
+					next.classList.contains(verseClass) || 
+					(!isEsv && next.querySelector("." + verseClass)) ||
+					next.classList.contains("chapter-num") || 
+					(next.tagName.toLowerCase() === "b" && next.classList.contains("verse-num")) ||
+					(next.tagName.toLowerCase() === "span" && next.classList.contains("chapter-num"))
+				))) {
+					text += next.textContent || "";
+					next = next.nextSibling;
+				}
+				parsed.push({ verse: verseNum, text: text.trim().replace(/\n+/g, " ") });
+			});
+			return parsed;
+		}
+		
+		return [];
+	}
+
+	/**
+	 * Renders the chapter in two-column parallel layout supporting both Bolls.life and Premium APIs.
+	 * At widths < 480px a tab-switcher replaces the grid (ADR-007).
+	 * Utilizes CSS grid rows to keep both columns locked to the same verse without bouncy scroll handlers.
+	 */
+	async renderParallelColumns(
+		primaryChapter: any,
+		chapterContainer: HTMLElement,
+		chapterContent: HTMLElement,
+		book: { bookid: number; name: string; chapters: number },
+		chapterNum: number,
+		books: { bookid: number; name: string; chapters: number }[]
+	) {
+		const secondary = this.settings.secondaryBibleVersion;
+		let secondaryChapterRaw: any = null;
+		try {
+			secondaryChapterRaw = await this.getChapterContent(secondary, book.bookid, chapterNum);
+		} catch (err) {
+			this.logDebug(`Parallel secondary fetch failed: ${err.message || err}`);
+		}
+
+		const containerWidth = chapterContainer.clientWidth || 480;
+		const isNarrow = containerWidth < 480;
+
+		const primaryVerses = this.normalizeChapterToVerses(primaryChapter);
+		const secondaryVerses = this.normalizeChapterToVerses(secondaryChapterRaw);
+
+		if (isNarrow) {
+			// Tab layout for narrow panels
+			const tabBar = chapterContent.createDiv({ cls: "parallel-tab-bar" });
+			const primaryTab = tabBar.createEl("button", {
+				cls: "parallel-tab-btn active",
+				text: this.settings.bibleVersion
+			});
+			const secondaryTab = tabBar.createEl("button", {
+				cls: "parallel-tab-btn",
+				text: secondary
+			});
+
+			const primaryCol = chapterContent.createDiv({ cls: "chapter-column" });
+			const secondaryCol = chapterContent.createDiv({ cls: "chapter-column" });
+			secondaryCol.style.display = "none";
+
+			this.fillColumn(primaryCol, primaryVerses, book, chapterNum);
+			this.fillColumn(secondaryCol, secondaryVerses, book, chapterNum);
+
+			primaryTab.addEventListener("click", () => {
+				primaryTab.classList.add("active");
+				secondaryTab.classList.remove("active");
+				primaryCol.style.display = "";
+				secondaryCol.style.display = "none";
+			});
+			secondaryTab.addEventListener("click", () => {
+				secondaryTab.classList.add("active");
+				primaryTab.classList.remove("active");
+				secondaryCol.style.display = "";
+				primaryCol.style.display = "none";
+			});
+		} else {
+			// Side-by-side grid layout (Perfect verse-by-verse alignment via CSS grid)
+			const grid = chapterContent.createDiv({ cls: "parallel-container" });
+
+			grid.createDiv({ cls: "chapter-column-header", text: this.settings.bibleVersion });
+			grid.createDiv({ cls: "chapter-column-header", text: secondary });
+
+			// Collect all verse numbers from both chapters
+			const allVerses = new Set<string>();
+			primaryVerses.forEach(v => allVerses.add(v.verse));
+			secondaryVerses.forEach(v => allVerses.add(v.verse));
+
+			// Sort verse numbers numerically
+			const sortedVerses = Array.from(allVerses).sort((a, b) => {
+				const aNum = parseInt(a);
+				const bNum = parseInt(b);
+				if (isNaN(aNum) || isNaN(bNum)) return a.localeCompare(b);
+				return aNum - bNum;
+			});
+
+			for (const vNum of sortedVerses) {
+				const primaryVerse = primaryVerses.find(v => v.verse === vNum);
+				const secondaryVerse = secondaryVerses.find(v => v.verse === vNum);
+
+				// Render primary side
+				if (primaryVerse) {
+					this.renderParallelVerseEl(grid, primaryVerse, book, chapterNum, true);
+				} else {
+					grid.createDiv({ cls: "verse parallel-empty-verse" });
+				}
+
+				// Render secondary side
+				if (secondaryVerse) {
+					this.renderParallelVerseEl(grid, secondaryVerse, book, chapterNum, false);
+				} else {
+					grid.createDiv({ cls: "verse parallel-empty-verse" });
+				}
+			}
+		}
+
+		this.applySavedHighlights(chapterContent, book.name, chapterNum);
+	}
+
+	/**
+	 * Helper: renders a flat list of normalized verses into a column element (narrow tab layout).
+	 */
+	fillColumn(
+		col: HTMLElement,
+		verses: { verse: string; text: string }[],
+		book: { bookid: number; name: string; chapters: number },
+		chapterNum: number
+	) {
+		for (const verse of verses) {
+			this.renderParallelVerseEl(col, verse, book, chapterNum, true);
+		}
+	}
+
+	/**
+	 * Renders a single verse in parallel view, applying Strong's rendering and click events.
+	 */
+	renderParallelVerseEl(
+		parent: HTMLElement,
+		verse: { verse: string; text: string },
+		book: { bookid: number; name: string; chapters: number },
+		chapterNum: number,
+		isPrimary: boolean
+	) {
+		const formattedVerseNumber = convertToSuperscript(verse.verse);
+		let displayHtml = verse.text.replace(/^\d+:\d+\s*/, "");
+		if (this.settings.showStrongsNumbers && (displayHtml.includes("<H") || displayHtml.includes("<S") || displayHtml.includes("<G"))) {
+			displayHtml = renderStrongsHtml(displayHtml, book.bookid >= 40);
+		}
+		if (this.settings.gospelQuotesRed && ["matthew", "mark", "luke", "john"].includes(book.name.toLowerCase())) {
+			displayHtml = displayHtml
+				.replace(/"([^"]+)"/g, '"<span style="color: red;">$1</span>"')
+				.replace(/\u201c([^\u201d]+)\u201d/g, '\u201c<span style="color: red;">$1</span>\u201d');
+		}
+		const verseEl = parent.createEl("div", {
+			cls: "verse",
+			attr: { "data-verse": verse.verse }
+		});
+		verseEl.innerHTML = `<span class="verse-num">${formattedVerseNumber}</span> ${displayHtml}`;
+		
+		if (this.settings.showStrongsNumbers) {
+			verseEl.querySelectorAll(".strongs-word").forEach((el: HTMLElement) => {
+				el.addEventListener("click", (e) => {
+					e.stopPropagation();
+					const id = el.getAttribute("data-strongs");
+					if (id) this.renderStrongsPanel(id);
+				});
+			});
+		}
+	}
+
 	renderCopyMessage(
 		book: { bookid: number; name: string; chapters: number },
 		chapter: number,
@@ -2011,7 +2375,14 @@ export class BibleView extends ItemView {
 			header.createSpan({ text: `${bookDisplayName} ${res.chapter}:${res.verse}`, cls: "bible-search-result-ref" });
 			
 			const body = card.createDiv({ cls: "bible-search-result-body" });
-			body.setText(res.text);
+			// Highlight matched search terms in result snippet
+			const parsed = parseAdvancedSearchQuery(query);
+			const highlightedHtml = highlightSearchTerms(res.text, parsed);
+			if (highlightedHtml.includes("<mark")) {
+				body.innerHTML = highlightedHtml;
+			} else {
+				body.setText(res.text);
+			}
 
 			card.addEventListener("click", async () => {
 				await this.navigateToPassage(res.bookName, res.chapter, parseInt(res.verse));

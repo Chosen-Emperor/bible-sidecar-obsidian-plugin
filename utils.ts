@@ -667,3 +667,243 @@ export function updateAnnotationsData(
 }
 
 
+// ─────────────────────────────────────────────────────────────────────────────
+// NEW ROUND-2 UTILITIES
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Serializes the in-memory annotations JSON store into a grouped Markdown string
+ * suitable for writing to the user's vault annotation file.
+ *
+ * Groups entries by Book, then lists each annotated verse with its highlight
+ * color and optional study note. Includes an `obsidian://bible` deep-link for
+ * quick navigation back to the passage.
+ *
+ * Pure function — no Obsidian imports, fully unit-testable.
+ */
+export function serializeAnnotationsToMarkdown(
+	annotationsData: Record<string, any>
+): string {
+	if (!annotationsData || Object.keys(annotationsData).length === 0) {
+		return "# Bible Annotations\n\n_No highlights or notes yet._\n";
+	}
+
+	// Group keys by book name
+	const groups: Record<string, string[]> = {};
+	for (const key of Object.keys(annotationsData)) {
+		const colonIdx = key.indexOf(":");
+		if (colonIdx === -1) continue;
+		const ref = key.substring(0, colonIdx);
+		const spaceIdx = ref.lastIndexOf(" ");
+		if (spaceIdx === -1) continue;
+		const book = ref.substring(0, spaceIdx);
+		if (!groups[book]) groups[book] = [];
+		groups[book].push(key);
+	}
+
+	const lines: string[] = ["# Bible Annotations\n"];
+
+	for (const book of Object.keys(groups).sort()) {
+		lines.push(`## ${book}\n`);
+		for (const key of groups[book].sort()) {
+			const colonIdx = key.indexOf(":");
+			const ref = key.substring(0, colonIdx); // e.g. "John 3"
+			const versePart = key.substring(colonIdx + 1); // e.g. "16" or "16-17"
+			const spaceIdx = ref.lastIndexOf(" ");
+			const chapter = ref.substring(spaceIdx + 1);
+
+			const annVal = annotationsData[key];
+			const anns = Array.isArray(annVal) ? annVal : [annVal];
+
+			for (const ann of anns) {
+				if (!ann) continue;
+				const uri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${chapter}&verse=${versePart}`;
+				const link = `[${book} ${chapter}:${versePart}](${uri})`;
+				const colorLabel = ann.color ? ` [${ann.color}]` : "";
+				const textLabel = ann.text ? ` — *"${ann.text}"*` : "";
+
+				lines.push(`### ${link}${colorLabel}${textLabel}`);
+				if (ann.note) {
+					lines.push(`> ${ann.note}`);
+				}
+				lines.push("");
+			}
+		}
+	}
+
+	return lines.join("\n");
+}
+
+/**
+ * Extracts cross-reference footnote markers from ESV API / API.Bible HTML.
+ *
+ * ESV HTML contains elements like:
+ *   <span class="crossreference"><a href="#ca" data-link="(Rom 5:8)">a</a></span>
+ *
+ * Returns an array of CrossReference objects with the letter label and
+ * the list of reference strings parsed from the data-link or title attribute.
+ *
+ * Pure function — no DOM access at parse time (caller passes html string).
+ * Uses a lightweight regex-based extraction to stay dependency-free.
+ */
+export interface CrossReference {
+	letter: string;
+	refs: string[];
+	verseNum?: number;
+}
+
+export function extractCrossReferences(html: string): CrossReference[] {
+	const results: CrossReference[] = [];
+
+	// Step 1: find all <span class="crossreference">...</span> blocks
+	const spanRegex = /<span[^>]*class="[^"]*crossreference[^"]*"[^>]*>([\s\S]*?)<\/span>/gi;
+	let spanMatch: RegExpExecArray | null;
+
+	while ((spanMatch = spanRegex.exec(html)) !== null) {
+		const inner = spanMatch[1];
+
+		// Step 2: within that span find the <a> element
+		const anchorRegex = /<a([^>]*)>([\s\S]*?)<\/a>/i;
+		const aMatch = inner.match(anchorRegex);
+		if (!aMatch) continue;
+
+		const attrs = aMatch[1];
+		const letterRaw = aMatch[2].replace(/<[^>]*>/g, "").trim();
+		if (!letterRaw) continue;
+
+		// Step 3: extract data-link or title attribute value
+		let dataLink = "";
+		const dataLinkMatch = attrs.match(/data-link="([^"]*)"/i);
+		if (dataLinkMatch) {
+			dataLink = dataLinkMatch[1];
+		} else {
+			const titleMatch = attrs.match(/title="([^"]*)"/i);
+			if (titleMatch) dataLink = titleMatch[1];
+		}
+
+		// Step 4: parse refs: "(Rom 5:8; 1Jn 4:9)" → ["Rom 5:8", "1Jn 4:9"]
+		const refsRaw = dataLink.replace(/^\(|\)$/g, "").trim();
+		const refs = refsRaw
+			? refsRaw.split(/[;,]/).map(r => r.trim()).filter(Boolean)
+			: [];
+
+		results.push({ letter: letterRaw, refs });
+	}
+
+	return results;
+}
+
+/**
+ * Represents a single token parsed from a Bolls.life KJV verse with Strong's numbers.
+ * Example input: "God<H430> created<H1254>" or "God<S>430</S>"
+ */
+export interface StrongsToken {
+	word: string;
+	strongsId: string; // e.g. "H430" or "G2316"
+}
+
+/**
+ * Parses a raw Bolls.life KJV verse text containing Strong's markers
+ * into an array of StrongsToken objects.
+ *
+ * Tokens without a Strong's ID are NOT included. Words without markers
+ * are passed through unchanged via renderStrongsHtml instead.
+ *
+ * Pure function — no DOM access, fully unit-testable.
+ */
+export function parseStrongsText(rawText: string, isNewTestament = false): StrongsToken[] {
+	const tokens: StrongsToken[] = [];
+	
+	// 1. Handle tag format: "statutes<S>2706</S>"
+	const tagRegex = /(\S+?)<S>(\d+)<\/S>/gi;
+	let m1: RegExpExecArray | null;
+	tagRegex.lastIndex = 0;
+	while ((m1 = tagRegex.exec(rawText)) !== null) {
+		const prefix = isNewTestament ? "G" : "H";
+		tokens.push({ word: m1[1], strongsId: `${prefix}${m1[2]}` });
+	}
+
+	// 2. Handle bracket format: "God<H430>"
+	const bracketRegex = /(\S+?)<([HG]\d+)>/gi;
+	let m2: RegExpExecArray | null;
+	bracketRegex.lastIndex = 0;
+	while ((m2 = bracketRegex.exec(rawText)) !== null) {
+		tokens.push({ word: m2[1], strongsId: m2[2].toUpperCase() });
+	}
+
+	return tokens;
+}
+
+/**
+ * Converts a raw Bolls.life KJV verse text containing Strong's markers
+ * into an HTML string where each Strong's-tagged word is wrapped in a
+ * `<span class="strongs-word" data-strongs="H430">` element.
+ *
+ * Words without Strong's markers are left as plain text.
+ *
+ * Pure function — no DOM access, fully unit-testable.
+ */
+export function renderStrongsHtml(rawText: string, isNewTestament = false): string {
+	let text = rawText;
+	const prefix = isNewTestament ? "G" : "H";
+
+	// 1. First, replace tags attached to a word: "statutes<S>2706</S>"
+	const tagRegex = /(\S+?)<S>(\d+)<\/S>/gi;
+	text = text.replace(tagRegex, (_, word, num) => {
+		const id = `${prefix}${num}`;
+		return `<span class="strongs-word" data-strongs="${id}" title="${id}">${word}</span>`;
+	});
+
+	// 2. Handle bracket format: "God<H430>"
+	const bracketRegex = /(\S+?)<([HG]\d+)>/gi;
+	text = text.replace(bracketRegex, (_, word, id) => {
+		const upperId = id.toUpperCase();
+		return `<span class="strongs-word" data-strongs="${upperId}" title="${upperId}">${word}</span>`;
+	});
+
+	// 3. Finally, replace any remaining standalone tags: "<S>2706</S>" or "<S>5795</S>"
+	const standaloneTagRegex = /<S>(\d+)<\/S>/gi;
+	text = text.replace(standaloneTagRegex, (_, num) => {
+		const id = `${prefix}${num}`;
+		return `<span class="strongs-word standalone-strongs" data-strongs="${id}" title="${id}"><sup>[${id}]</sup></span>`;
+	});
+
+	return text;
+}
+
+/**
+ * Wraps matched search terms and exact phrases in a <mark class="search-match"> element
+ * within the provided plain text snippet for display in search results.
+ *
+ * Returns an HTML string — the caller is responsible for setting innerHTML safely.
+ *
+ * Pure function — no DOM access, fully unit-testable.
+ */
+export function highlightSearchTerms(text: string, parsed: ParsedQuery): string {
+	if (!text) return "";
+
+	// Escape HTML entities in the raw text first to prevent XSS
+	let html = text
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;");
+
+	const termsToHighlight: string[] = [
+		...parsed.exactPhrases,
+		...parsed.includedTerms,
+	].filter(t => t.length > 0);
+
+	if (termsToHighlight.length === 0) return html;
+
+	// Sort by length descending so longer phrases take precedence over sub-terms
+	termsToHighlight.sort((a, b) => b.length - a.length);
+
+	for (const term of termsToHighlight) {
+		// Case-insensitive global replace, preserving original case in output
+		const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		const re = new RegExp(`(${escaped})`, "gi");
+		html = html.replace(re, '<mark class="search-match">$1</mark>');
+	}
+
+	return html;
+}

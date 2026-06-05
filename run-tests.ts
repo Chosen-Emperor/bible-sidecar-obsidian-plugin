@@ -17,7 +17,13 @@ import {
     parseProtocolParams,
     updateLocalCacheData,
     searchBibleLocalData,
-    updateAnnotationsData
+    updateAnnotationsData,
+    serializeAnnotationsToMarkdown,
+    extractCrossReferences,
+    parseStrongsText,
+    renderStrongsHtml,
+    highlightSearchTerms,
+    parseAdvancedSearchQuery,
 } from "./utils";
 
 // Colors for beautiful CLI output
@@ -685,6 +691,127 @@ function runTestSuite() {
     // Clear only Romans 12:1
     testData = updateAnnotationsData(testData, "Romans", 12, "1", null);
     assert(testData["Romans 12:1-2"] === undefined, "Overlapping clear should delete Romans 12:1-2 key");
+
+    console.log();
+
+    // ----------------------------------------------------
+    // TEST SECTION 15: ANNOTATIONS → MARKDOWN SERIALIZER
+    // ----------------------------------------------------
+    console.log(`${colors.yellow}${colors.bold}[Test Section 15: Annotations → Markdown Serializer]${colors.reset}`);
+
+    const emptyAnnotations: Record<string, any> = {};
+    const emptyMd = serializeAnnotationsToMarkdown(emptyAnnotations);
+    assert(emptyMd.includes("_No highlights or notes yet._"), "Empty annotations produce placeholder text");
+
+    const singleAnnotation = { "John 3:16": { color: "yellow", note: "Amazing grace" } };
+    const singleMd = serializeAnnotationsToMarkdown(singleAnnotation);
+    assert(singleMd.includes("## John"), "Single annotation groups under book heading");
+    assert(singleMd.includes("[yellow]"), "Color label appears in output");
+    assert(singleMd.includes("> Amazing grace"), "Note appears as blockquote");
+    assert(singleMd.includes("obsidian://bible"), "Deep link appears in output");
+
+    const multiAnnotation = {
+        "Romans 8:28": { color: "green" },
+        "John 3:16": { color: "yellow", note: "Grace note" },
+        "John 3:17": { color: "blue" }
+    };
+    const multiMd = serializeAnnotationsToMarkdown(multiAnnotation);
+    assert(multiMd.indexOf("## John") < multiMd.indexOf("## Romans"), "Books are sorted alphabetically (John before Romans)");
+    assert(multiMd.includes("## Romans"), "Romans group heading present");
+    assert((multiMd.match(/###/g) || []).length === 3, "Three verse headings rendered");
+
+    console.log();
+
+    // ----------------------------------------------------
+    // TEST SECTION 16: CROSS-REFERENCE EXTRACTION
+    // ----------------------------------------------------
+    console.log(`${colors.yellow}${colors.bold}[Test Section 16: Cross-Reference HTML Extraction]${colors.reset}`);
+
+    const esvHtmlNoCrossRef = "<p>For God so loved the world</p>";
+    const noCrossRefs = extractCrossReferences(esvHtmlNoCrossRef);
+    assert(noCrossRefs.length === 0, "No cross-refs returned for HTML without crossreference spans");
+
+    const esvHtmlWithCrossRef = `<p>For God<span class="crossreference"><a data-link="(Rom 5:8; 1Jn 4:9)">a</a></span> so loved</p>`;
+    const crossRefs = extractCrossReferences(esvHtmlWithCrossRef);
+    assert(crossRefs.length === 1, "One cross-reference group extracted");
+    assert(crossRefs[0].letter === "a", "Letter label is 'a'");
+    assert(crossRefs[0].refs.length === 2, "Two refs parsed: Rom 5:8 and 1Jn 4:9");
+    assert(crossRefs[0].refs[0] === "Rom 5:8", "First ref is Rom 5:8");
+    assert(crossRefs[0].refs[1] === "1Jn 4:9", "Second ref is 1Jn 4:9");
+
+    const multiCrossRef = `
+        <span class="crossreference"><a data-link="(Gen 1:1)">a</a></span>
+        <span class="crossreference"><a data-link="(Jn 3:16; Mt 5:3, Lk 1:1)">b</a></span>
+    `;
+    const multi = extractCrossReferences(multiCrossRef);
+    assert(multi.length === 2, "Two cross-reference groups extracted from multi HTML");
+    assert(multi[0].letter === "a", "First group letter is 'a'");
+    assert(multi[1].letter === "b", "Second group letter is 'b'");
+    assert(multi[1].refs.length === 3, "Three refs in second group (Jn, Mt, Lk)");
+
+    console.log();
+
+    // ----------------------------------------------------
+    // TEST SECTION 17: STRONGS CONCORDANCE PARSERS
+    // ----------------------------------------------------
+    console.log(`${colors.yellow}${colors.bold}[Test Section 17: Strong's Concordance Parsers]${colors.reset}`);
+
+    const kjvVerse = "In<H1961> the beginning<H7225> God<H430> created<H1254>";
+    const tokens = parseStrongsText(kjvVerse);
+    assert(tokens.length === 4, "Parsed 4 Strong's tokens from KJV verse");
+    assert(tokens[0].word === "In", "First token word is 'In'");
+    assert(tokens[0].strongsId === "H1961", "First token Strong's ID is H1961");
+    assert(tokens[2].word === "God", "Third token word is 'God'");
+    assert(tokens[2].strongsId === "H430", "Third token Strong's ID is H430");
+
+    const noStrongsVerse = "For God so loved the world";
+    const emptyTokens = parseStrongsText(noStrongsVerse);
+    assert(emptyTokens.length === 0, "No tokens extracted from verse without Strong's markers");
+
+    const greekVerse = "In<G1722> the beginning<G746> was<G2258> the Word<G3056>";
+    const greekTokens = parseStrongsText(greekVerse);
+    assert(greekTokens.length === 4, "Parsed 4 Greek Strong's tokens");
+    assert(greekTokens[0].strongsId === "G1722", "Greek Strong's prefix G is supported");
+
+    const rendered = renderStrongsHtml("God<H430> created<H1254> the heavens");
+    assert(rendered.includes('class="strongs-word"'), "Rendered HTML contains strongs-word class");
+    assert(rendered.includes('data-strongs="H430"'), "Rendered HTML contains data-strongs attribute");
+    assert(rendered.includes(">God<"), "Word 'God' is wrapped in span");
+    assert(rendered.includes("the heavens"), "Non-Strong's text preserved unchanged");
+    assert(!rendered.includes("<H430>"), "Raw Strong's markers are removed from output");
+
+    console.log();
+
+    // ----------------------------------------------------
+    // TEST SECTION 18: SEARCH TERM HIGHLIGHTING
+    // ----------------------------------------------------
+    console.log(`${colors.yellow}${colors.bold}[Test Section 18: Search Term Highlighting]${colors.reset}`);
+
+    const parsed18 = parseAdvancedSearchQuery("eternal life");
+    const highlightedBasic = highlightSearchTerms("For God so loved the world, that he gave his only Son", parsed18);
+    // "eternal" and "life" are included terms — neither in this text
+    assert(!highlightedBasic.includes("<mark"), "No marks when no terms match in text");
+
+    const parsed18b = parseAdvancedSearchQuery("loved world");
+    const highlighted = highlightSearchTerms("For God so loved the world, that he gave his only Son", parsed18b);
+    assert(highlighted.includes('<mark class="search-match">loved</mark>'), "Term 'loved' is highlighted");
+    assert(highlighted.includes('<mark class="search-match">world</mark>'), "Term 'world' is highlighted");
+
+    const parsedPhrase = parseAdvancedSearchQuery('"only Son"');
+    const highlightedPhrase = highlightSearchTerms("For God so loved the world, that he gave his only Son", parsedPhrase);
+    assert(highlightedPhrase.includes('<mark class="search-match">only Son</mark>'), "Exact phrase 'only Son' highlighted as one unit");
+
+    // XSS safety check
+    const xssText = "<script>alert(1)</script> For God so loved";
+    const parsedXss = parseAdvancedSearchQuery("loved");
+    const highlightedXss = highlightSearchTerms(xssText, parsedXss);
+    assert(highlightedXss.includes("&lt;script&gt;"), "HTML tags are escaped to prevent XSS");
+    assert(highlightedXss.includes('<mark class="search-match">loved</mark>'), "Term still highlighted after HTML escaping");
+
+    // Case-insensitive matching
+    const parsedCase = parseAdvancedSearchQuery("GOD");
+    const highlightedCase = highlightSearchTerms("For God so loved the world", parsedCase);
+    assert(highlightedCase.includes('<mark class="search-match">God</mark>'), "Highlighting is case-insensitive (GOD matches God)");
 
     console.log();
 }
