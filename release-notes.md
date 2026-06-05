@@ -1,4 +1,4 @@
-# Release Notes - v1.3.14
+# Release Notes - v1.3.15
 
 This release fixes study note indicators and hardens the annotation highlight system with a refactored state model and expanded test coverage.
 
