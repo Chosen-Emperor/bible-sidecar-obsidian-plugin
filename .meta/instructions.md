@@ -16,7 +16,7 @@ You must perform these steps in order when working in this codebase:
 ### 2. Development Phase
 - [ ] **Extract Pure Functions**: If you write core logic, search engines, parser patterns, or state compilers, write them as pure, exportable functions in [utils.ts](file:///c:/Users/rayni/Documents/bible-sidecar-plus/utils.ts). Keep them free from `obsidian` imports.
 - [ ] **UI Implementation**: If updating UI, implement it inside [BibleView.ts](file:///c:/Users/rayni/Documents/bible-sidecar-plus/BibleView.ts) or [settings.ts](file:///c:/Users/rayni/Documents/bible-sidecar-plus/settings.ts) using Vanilla CSS and native Obsidian DOM APIs.
-- [ ] **Paint Safely**: Ensure any highlighting or custom annotation painting is integrated into the unified repaint path (`applySavedHighlights` in `BibleView.ts`).
+- [ ] **Paint Safely**: Ensure any custom annotation painting is integrated into the unified repaint path (`applySavedHighlights` in `BibleView.ts`).
 - [ ] **Icon Fallbacks**: Use `safeSetIcon()` instead of raw `setIcon()` to guarantee mobile WebKit compatibility.
 
 ### 3. Verification Phase

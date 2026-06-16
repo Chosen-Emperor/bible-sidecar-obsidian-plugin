@@ -35,7 +35,7 @@ This document tracks reasoning for highlight refinements (nested vs double highl
 
 ## Offline Passage Navigation Guard
 - **Objective**: Prevent users from navigating to blank/broken screens when clicking on internal links (`[[John 3:16]]` etc.) directed at uncached scriptures.
-- **Dynamic Check**: Intercepted requests inside `navigateToPassage()`. If the view is offline, it reads local database translation caches and checks if the targeted chapter is cached.
+- **Dynamic Check**: Intercepted requests inside `navigateToPassage()`. If the view is offline, it reads local Offline Cache files and checks if the targeted chapter is cached.
 - **User Notice Alert**: Shows an informative `new Notice()` warning that the chapter is unavailable offline, aborting navigation early to preserve active state.
 
 ## Scroll Position Memory Cache

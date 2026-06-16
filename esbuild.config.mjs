@@ -3,6 +3,7 @@ import process from "process";
 import builtins from "builtin-modules";
 import fs from "fs";
 import path from "path";
+import { execSync } from "child_process";
 
 const banner =
 `/*
@@ -28,6 +29,23 @@ const copyToVaultPlugin = {
 				console.log(`[copy-to-vault] Successfully copied files to Obsidian Vault!`);
 			} catch (err) {
 				console.error(`[copy-to-vault] Error copying files:`, err);
+			}
+
+			// Push to emulator if available
+			try {
+				const adbPath = "C:\\Users\\rayni\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe";
+				const devicesOutput = execSync(`"${adbPath}" devices`).toString();
+				if (devicesOutput.includes("\temulator-") || devicesOutput.includes("\tdevice")) {
+					console.log(`[copy-to-vault] Active device/emulator found. Pushing files via ADB...`);
+					const targetDir = "/sdcard/Documents/Test/.obsidian/plugins/bible-sidecar-plus";
+					execSync(`"${adbPath}" shell mkdir -p ${targetDir}`);
+					execSync(`"${adbPath}" push main.js ${targetDir}/main.js`);
+					execSync(`"${adbPath}" push manifest.json ${targetDir}/manifest.json`);
+					execSync(`"${adbPath}" push styles.css ${targetDir}/styles.css`);
+					console.log(`[copy-to-vault] Successfully pushed files to Android emulator!`);
+				}
+			} catch (adbErr) {
+				console.log(`[copy-to-vault] Android emulator push skipped (no active emulator or ADB server offline).`);
 			}
 		});
 	}

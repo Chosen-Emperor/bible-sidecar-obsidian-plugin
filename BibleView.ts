@@ -1,63 +1,6 @@
 import { ItemView, WorkspaceLeaf, requestUrl, Notice, Platform, setIcon, Modal, Setting, App } from "obsidian";
-import { convertToSuperscript, convertToNumber, compileCopyMessage, copyToClipboard, BIBLE_BOOK_IDS, isNavigationAllowedOffline, calculateDownloadProportion, isOldTestament, getBookDisplayName, searchBibleLocalData, updateAnnotationsData, highlightSearchTerms, parseAdvancedSearchQuery, renderStrongsHtml, extractCrossReferences } from "./utils";
-
-function colorGospelQuotesRedInDOM(node: Node, state = { inQuote: false }) {
-	if (node.nodeType === Node.TEXT_NODE) {
-		const text = node.textContent || "";
-		let resultHtml = "";
-		let lastIdx = 0;
-		
-		for (let i = 0; i < text.length; i++) {
-			const char = text[i];
-			if (char === "“" || char === "\u201c" || (char === '"' && !state.inQuote)) {
-				resultHtml += text.substring(lastIdx, i);
-				resultHtml += char + '<span style="color: red;">';
-				state.inQuote = true;
-				lastIdx = i + 1;
-			} else if (char === "”" || char === "\u201d" || (char === '"' && state.inQuote)) {
-				resultHtml += text.substring(lastIdx, i);
-				if (state.inQuote) {
-					resultHtml += '</span>';
-					state.inQuote = false;
-				}
-				resultHtml += char;
-				lastIdx = i + 1;
-			}
-		}
-		
-		if (lastIdx > 0) {
-			resultHtml += text.substring(lastIdx);
-			if (state.inQuote && !resultHtml.endsWith('</span>')) {
-				resultHtml += '</span>';
-			}
-			
-			const temp = document.createElement("span");
-			temp.innerHTML = resultHtml;
-			
-			const parent = node.parentNode;
-			if (parent) {
-				while (temp.firstChild) {
-					parent.insertBefore(temp.firstChild, node);
-				}
-				parent.removeChild(node);
-			}
-		} else if (state.inQuote) {
-			const span = document.createElement("span");
-			span.style.color = "red";
-			span.textContent = text;
-			node.parentNode?.replaceChild(span, node);
-		}
-	} else if (node.nodeType === Node.ELEMENT_NODE) {
-		const tagName = (node as Element).tagName.toLowerCase();
-		if (tagName !== "script" && tagName !== "style") {
-			const children = Array.from(node.childNodes);
-			children.forEach(child => {
-				colorGospelQuotesRedInDOM(child, state);
-			});
-		}
-	}
-}
-
+import { convertToSuperscript, convertToNumber, compileCopyMessage, compileDragText, copyToClipboard, BIBLE_BOOK_IDS, isNavigationAllowedOffline, calculateDownloadProportion, isOldTestament, getBookDisplayName, searchBibleLocalData, highlightSearchTerms, parseAdvancedSearchQuery, renderStrongsHtml, extractCrossReferences } from "./utils";
+import { SidecarRenderer } from "./SidecarRenderer";
 export const BibleViewType = "bible-view-plus";
 
 interface BibleSidecarSettings {
@@ -94,12 +37,11 @@ interface BibleSidecarSettings {
 	enableLogging: boolean;
 	abbreviateBookNames: boolean;
 	enableOfflineAccents: boolean;
-	annotationsFile: string;
-	annotationsData: Record<string, { color: string; note?: string; text?: string; verses?: Record<string, string | string[]> } | { color: string; note?: string; text?: string; verses?: Record<string, string | string[]> }[]>;
 	parallelEnabled: boolean;
 	secondaryBibleVersion: string;
 	showCrossReferences: boolean;
 	showStrongsNumbers: boolean;
+	autoExpandTriggerPrefix: string;
 }
 
 const DEFAULT_SETTINGS: Partial<BibleSidecarSettings> = {
@@ -136,12 +78,11 @@ const DEFAULT_SETTINGS: Partial<BibleSidecarSettings> = {
 	esvApiKey: "",
 	enableLogging: false,
 	abbreviateBookNames: false,
-	annotationsFile: "bible-annotations.md",
-	annotationsData: {},
 	parallelEnabled: false,
 	secondaryBibleVersion: "KJV",
 	showCrossReferences: false,
 	showStrongsNumbers: false,
+	autoExpandTriggerPrefix: "--",
 };
 
 export class BibleView extends ItemView {
@@ -156,16 +97,24 @@ export class BibleView extends ItemView {
 	activeChapterNumber: number | null = null;
 	private onlineListener: () => void;
 	private offlineListener: () => void;
-	private isOfflineState: boolean = !navigator.onLine;
+	isOfflineState: boolean = !navigator.onLine;
 	private currentWindow: Window | null = null;
 	private isLoadingBooks: boolean = false;
-	private savedScrollPositions: Record<string, number> = {};
-	private otCollapsed: boolean = false;
-	private ntCollapsed: boolean = false;
-	private strongsDefinitionCache: Map<string, any> = new Map();
-	tapSelectMode = false;
-	selectedVersesForAnnotation = new Set<string>();
+	savedScrollPositions: Record<string, number> = {};
+	activeSelectionChangeHandler: (() => void) | null = null;
+	activeSelectionDoc: Document | null = null;
+	otCollapsed: boolean = false;
+	ntCollapsed: boolean = false;
+	strongsDefinitionCache: Map<string, any> = new Map();
 
+	resizeObserver: ResizeObserver | null = null;
+
+	cleanupResizeObserver() {
+		if (this.resizeObserver) {
+			this.resizeObserver.disconnect();
+			this.resizeObserver = null;
+		}
+	}
 
 	saveCurrentScrollPosition() {
 		const container = this.containerEl.querySelector(".chapter-container");
@@ -192,8 +141,11 @@ export class BibleView extends ItemView {
 		}
 	}
 
+	renderer: SidecarRenderer;
+
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
+		this.renderer = new SidecarRenderer(this);
 	}
 
 	async logDebug(msg: string) {
@@ -221,63 +173,7 @@ export class BibleView extends ItemView {
 	}
 
 	safeSetIcon(el: HTMLElement, iconId: string) {
-		// If we are on mobile (iPadOS/iOS/Android), bypass Obsidian's native SVG icon system completely.
-		// Obsidian Mobile often uses lazy-loaded sprite sheets or different Lucide registrations that fail silently on WebKit.
-		// Applying clean, touch-friendly Unicode symbols guarantees 100% crisp visual controls on mobile.
-		if (Platform.isMobile) {
-			if (this.plugin?.writeLog) {
-				this.plugin.writeLog(`[safeSetIcon] Mobile environment detected (Platform.isMobile = true). Bypassing native icon for "${iconId}" and applying solid Unicode fallback.`).catch(() => {});
-			}
-			el.empty();
-			if (iconId === "search") el.setText("🔍");
-			else if (iconId === "x") el.setText("✖");
-			else if (iconId === "arrow-left") el.setText("◀");
-			else if (iconId === "book-open") el.setText("📖");
-			else if (iconId === "chevron-left") el.setText("◀");
-			else if (iconId === "chevron-right") el.setText("▶");
-			else if (iconId === "chevron-down") el.setText("▼");
-			else if (iconId === "chevron-up") el.setText("▲");
-			else if (iconId === "copy") el.setText("📋");
-			else if (iconId === "pencil") el.setText("🖌");
-			else if (iconId === "highlighter") el.setText("🖍");
-			else if (iconId === "wifi-off") el.setText("🔌");
-			else if (iconId === "loader") el.setText("⏳");
-			return;
-		}
-
-		try {
-			setIcon(el, iconId);
-			
-			// Verify if the SVG was actually populated with paths/shapes.
-			// Under some configurations, setIcon executes without throwing an error but injects an empty SVG element.
-			const svg = el.querySelector("svg");
-			if (!svg || svg.children.length === 0) {
-				throw new Error("SVG icon injected but has no child elements (silent failure).");
-			}
-
-			if (this.plugin?.writeLog) {
-				this.plugin.writeLog(`[safeSetIcon] Successfully set native icon "${iconId}" on element ${el.tagName} | HTML: ${el.innerHTML}`).catch(() => {});
-			}
-		} catch (error: any) {
-			if (this.plugin?.writeLog) {
-				this.plugin.writeLog(`[safeSetIcon] ERROR/SILENT FAILURE setting icon "${iconId}" on element ${el.tagName}: ${error?.message || error}`).catch(() => {});
-			}
-			el.empty(); // Clear out the empty SVG shell to make room for clean text fallback
-			// Fallback text/emoji if setIcon fails to render
-			if (iconId === "search") el.setText("🔍");
-			else if (iconId === "x") el.setText("✖");
-			else if (iconId === "arrow-left") el.setText("◀");
-			else if (iconId === "book-open") el.setText("📖");
-			else if (iconId === "chevron-left") el.setText("◀");
-			else if (iconId === "chevron-right") el.setText("▶");
-			else if (iconId === "chevron-down") el.setText("▼");
-			else if (iconId === "chevron-up") el.setText("▲");
-			else if (iconId === "copy") el.setText("📋");
-			else if (iconId === "pencil") el.setText("🖌");
-			else if (iconId === "highlighter") el.setText("🖍");
-			else if (iconId === "wifi-off") el.setText("🔌");
-			else if (iconId === "loader") el.setText("⏳");
-		}
+		this.renderer.safeSetIcon(el, iconId);
 	}
 
 	public load(): void {
@@ -301,28 +197,6 @@ export class BibleView extends ItemView {
 
 		if (!needsReRender) {
 			this.logDebug("updateSettings: No structural settings changed. Skipping full view reload (flashing prevented).");
-			if (this.currentView === "verses" && this.activeBook && this.activeChapterNumber !== null) {
-				const chapterContent = this.containerEl.querySelector(".chapter-content") as HTMLElement;
-				if (chapterContent) {
-					// Clear visual highlights first
-					chapterContent.querySelectorAll(".highlight-yellow, .highlight-green, .highlight-blue, .highlight-pink").forEach(el => {
-						el.className = el.className.replace(/\bhighlight-\w+\b/g, "").trim();
-					});
-					chapterContent.querySelectorAll(".highlight-phrase").forEach(span => {
-						const parent = span.parentNode;
-						if (parent) {
-							while (span.firstChild) {
-								parent.insertBefore(span.firstChild, span);
-							}
-							parent.removeChild(span);
-						}
-					});
-					chapterContent.querySelectorAll(".bible-verse-note-indicator").forEach(el => el.remove());
-					chapterContent.normalize();
-					
-					this.applySavedHighlights(chapterContent, this.activeBook.name, this.activeChapterNumber);
-				}
-			}
 			return;
 		}
 
@@ -390,7 +264,7 @@ export class BibleView extends ItemView {
 		if (this.plugin?.writeLog) await this.plugin.writeLog(foundMsg);
 
 		// Block navigation to uncached chapters when offline
-		const localData = await this.plugin.readLocalTranslation(this.settings.bibleVersion);
+		const localData = await this.plugin.cacheStore.readLocalTranslation(this.settings.bibleVersion);
 		if (!isNavigationAllowedOffline(this.isOfflineState, localData, targetBook.bookid, chapterNumber)) {
 			new Notice(`🔌 Chapter offline: ${targetBook.name} ${chapterNumber} is not cached for offline use.`);
 			this.logDebug(`Navigation blocked: ${targetBook.name} ${chapterNumber} is not cached and view is offline.`);
@@ -656,6 +530,7 @@ export class BibleView extends ItemView {
 
 	async onClose() {
 		this.logDebug("onClose called. Cleaning up listeners.");
+		this.cleanupResizeObserver();
 		const win = this.currentWindow || this.containerEl.win || window;
 		if (this.onlineListener && win) {
 			win.removeEventListener("online", this.onlineListener);
@@ -665,6 +540,11 @@ export class BibleView extends ItemView {
 			win.removeEventListener("offline", this.offlineListener);
 			this.logDebug("Removed offline listener.");
 		}
+		if (this.activeSelectionChangeHandler && this.activeSelectionDoc) {
+			this.activeSelectionDoc.removeEventListener("selectionchange", this.activeSelectionChangeHandler);
+			this.activeSelectionChangeHandler = null;
+			this.activeSelectionDoc = null;
+		}
 	}
 
 	async loadBible() {
@@ -672,6 +552,7 @@ export class BibleView extends ItemView {
 			this.logDebug("loadBible ignored: books list is already loading.");
 			return;
 		}
+		this.cleanupResizeObserver();
 		this.logDebug(`loadBible called. currentView=${this.currentView}`);
 		this.isLoadingBooks = true;
 		this.currentView = "books";
@@ -693,7 +574,7 @@ export class BibleView extends ItemView {
 
 	async generateBibleBooks(language: string) {
 		this.logDebug(`generateBibleBooks called with language: ${language}`);
-		const localData = await this.plugin.readLocalTranslation(this.settings.bibleVersion);
+		const localData = await this.plugin.cacheStore.readLocalTranslation(this.settings.bibleVersion);
 		if (localData && localData.books && localData.books.length > 50) {
 			this.logDebug(`Found local cached books list for version ${this.settings.bibleVersion} (count: ${localData.books.length})`);
 			return localData.books;
@@ -711,47 +592,13 @@ export class BibleView extends ItemView {
 		if (!this.isOfflineState) {
 			this.logDebug(`Local books list not found or incomplete for ${this.settings.bibleVersion}. Attempting online fetches...`);
 
-			if (this.settings.apiBibleEnabled && this.settings.apiBibleKey.trim()) {
-				try {
-					this.logDebug(`Attempting API.Bible books fetch for version ID: ${this.settings.apiBibleVersionId}`);
-					const response = await requestUrl({
-						url: `https://api.scripture.api.bible/v1/bibles/${this.settings.apiBibleVersionId}/books`,
-						headers: { "api-key": this.settings.apiBibleKey.trim() }
-					});
-					if (response.status === 200 && response.json?.data) {
-						this.logDebug("API.Bible books fetch succeeded!");
-						this.updateOfflineStatus(false);
-						const mappedBooks = response.json.data.map((book: any) => {
-							const idUpper = book.id.toUpperCase();
-							const bookIdx = BIBLE_BOOK_IDS.indexOf(idUpper);
-							const bookid = bookIdx !== -1 ? bookIdx + 1 : 100;
-							const chapters = STANDARD_BOOK_CHAPTERS[idUpper] || 1;
-							return {
-								bookid,
-								name: book.name,
-								chapters
-							};
-						});
-						return mappedBooks.sort((a: any, b: any) => a.bookid - b.bookid);
-					}
-				} catch (err) {
-					this.logDebug(`API.Bible books request failed: ${err.message || err}`);
-					console.error("API.Bible books request failed, falling back to bolls.life:", err);
-				}
-			}
-
 			try {
-				const url = `https://bolls.life/get-books/${language}`;
-				this.logDebug(`Attempting Bolls.life books fetch for version: ${language}`);
-				const response = await requestUrl(url);
-				if (response.status === 200 && response.json) {
-					this.logDebug("Bolls.life books fetch succeeded!");
-					this.updateOfflineStatus(false);
-					return response.json;
-				}
+				const books = await this.plugin.scriptureProvider.fetchBooks(language);
+				this.updateOfflineStatus(false);
+				return books;
 			} catch (err) {
-				this.logDebug(`Bolls.life books request failed: ${err.message || err}`);
-				console.error("Bolls.life books request failed, using local offline fallback:", err);
+				this.logDebug(`ScriptureProvider books request failed: ${err.message || err}`);
+				console.error("ScriptureProvider books request failed, using local offline fallback:", err);
 				this.updateOfflineStatus(true);
 			}
 		} else {
@@ -782,7 +629,7 @@ export class BibleView extends ItemView {
 
 	async getChapterContent(version: string, bookid: number, chapter: number) {
 		this.logDebug(`getChapterContent called for version=${version}, bookid=${bookid}, chapter=${chapter}`);
-		const localData = await this.plugin.readLocalTranslation(version);
+		const localData = await this.plugin.cacheStore.readLocalTranslation(version);
 		if (localData) {
 			const chapterVerses = localData.passages[bookid]?.[chapter];
 			if (chapterVerses) {
@@ -801,69 +648,26 @@ export class BibleView extends ItemView {
 		}
 
 		if (!this.isOfflineState) {
-			if (this.settings.esvApiEnabled && this.settings.esvApiKey.trim() && version.toUpperCase() === "ESV") {
-				const bookId = BIBLE_BOOK_IDS[bookid - 1] || "GEN";
-				try {
-					const query = `${bookId} ${chapter}`;
-					this.logDebug(`Attempting ESV API query: ${query}`);
-					const response = await requestUrl({
-						url: `https://api.esv.org/v3/passage/html/?q=${encodeURIComponent(query)}&include-verse-numbers=true&include-first-verse-numbers=true&include-headings=false&include-footnotes=false&include-audio-link=false&include-passage-references=false&include-copyright=false&include-short-copyright=false&wrapping-div=false`,
-						headers: { "Authorization": `Token ${this.settings.esvApiKey.trim()}` }
-					});
-					if (response.status === 200 && response.json?.passages?.[0]) {
-						this.logDebug("ESV API fetch succeeded!");
-						this.updateOfflineStatus(false);
-						if (this.plugin?.writeLog) {
-							await this.plugin.writeLog(`ESV API raw HTML for ${bookId} ${chapter}:\n${response.json.passages[0]}`);
-						}
-						const content = { isEsvApi: true, html: response.json.passages[0], isFullyCached: true };
-						this.plugin.cachePassageLocally(version, bookid, chapter, bookId, content);
-						return content;
-					}
-				} catch (err) {
-					this.logDebug(`ESV API chapter request failed: ${err.message || err}`);
-					console.error("ESV API chapter request failed, falling back:", err);
-				}
-			}
-
-			if (this.settings.apiBibleEnabled && this.settings.apiBibleKey.trim()) {
-				const bookId = BIBLE_BOOK_IDS[bookid - 1] || "GEN";
-				try {
-					this.logDebug(`Attempting API.Bible fetch for version: ${this.settings.apiBibleVersionId}, passage: ${bookId} ${chapter}`);
-					const response = await requestUrl({
-						url: `https://api.scripture.api.bible/v1/bibles/${this.settings.apiBibleVersionId}/chapters/${bookId}.${chapter}?include-verse-spans=true`,
-						headers: { "api-key": this.settings.apiBibleKey.trim() }
-					});
-					if (response.status === 200 && response.json?.data?.content) {
-						this.logDebug("API.Bible fetch succeeded!");
-						this.updateOfflineStatus(false);
-						if (this.plugin?.writeLog) {
-							await this.plugin.writeLog(`API.Bible raw HTML for ${bookId} ${chapter}:\n${response.json.data.content}`);
-						}
-						const content = { isApiBible: true, html: response.json.data.content, isFullyCached: true };
-						this.plugin.cachePassageLocally(version, bookid, chapter, bookId, content);
-						return content;
-					}
-				} catch (err) {
-					this.logDebug(`API.Bible chapter request failed: ${err.message || err}`);
-					console.error("API.Bible chapter request failed, falling back to bolls.life:", err);
-				}
-			}
-
 			try {
-				const url = `https://bolls.life/get-chapter/${version}/${bookid}/${chapter}`;
-				this.logDebug(`Attempting Bolls.life fetch: ${url}`);
-				const response = await requestUrl(url);
-				if (response.status === 200) {
-					this.logDebug("Bolls.life fetch succeeded!");
-					this.updateOfflineStatus(false);
-					this.plugin.cachePassageLocally(version, bookid, chapter, "Book", response.json);
-					return response.json;
+				const content = await this.plugin.scriptureProvider.fetchChapter(version, bookid, chapter);
+				this.updateOfflineStatus(false);
+				
+				const bookIdStr = BIBLE_BOOK_IDS[bookid - 1] || "GEN";
+				
+				if (this.plugin?.writeLog) {
+					if (content.isEsvApi) {
+						await this.plugin.writeLog(`ESV API raw HTML for ${bookIdStr} ${chapter}:\n${content.html}`);
+					} else if (content.isApiBible) {
+						await this.plugin.writeLog(`API.Bible raw HTML for ${bookIdStr} ${chapter}:\n${content.html}`);
+					}
 				}
-				throw new Error(`Request failed with status ${response.status}`);
+				
+				const cacheLabel = content.isEsvApi || content.isApiBible ? bookIdStr : "Book";
+				this.plugin.cachePassageLocally(version, bookid, chapter, cacheLabel, content);
+				return content;
 			} catch (err) {
-				this.logDebug(`Bolls.life chapter request failed: ${err.message || err}`);
-				console.error("Bolls.life chapter request failed, using local offline fallback:", err);
+				this.logDebug(`ScriptureProvider chapter fetch failed: ${err.message || err}`);
+				console.error("ScriptureProvider chapter fetch failed, using local offline fallback:", err);
 				this.updateOfflineStatus(true);
 				throw err;
 			}
@@ -875,229 +679,7 @@ export class BibleView extends ItemView {
 
 
 	async renderBooks(books: { bookid: number; name: string; chapters: number }[]) {
-		this.logDebug(`renderBooks called with ${books?.length} books. isOfflineState=${this.isOfflineState}`);
-		const { containerEl } = this;
-		containerEl.empty();
-
-		const localData = await this.plugin.readLocalTranslation(this.settings.bibleVersion);
-		const isOffline = this.isOfflineState;
-
-		const ChapterWrapper = containerEl.createEl("div", {
-			cls: "bible-wrapper",
-		});
-		if (this.settings.enableOfflineAccents) {
-			ChapterWrapper.classList.add("enable-offline-accents");
-		}
-
-		// 1. Search bar (fixed at top of wrapper)
-		const searchContainer = ChapterWrapper.createDiv({ cls: "bible-search-container" });
-		const searchInputWrapper = searchContainer.createDiv({ cls: "bible-search-input-wrapper" });
-
-		const searchIcon = searchInputWrapper.createDiv({ cls: "bible-search-icon" });
-		this.safeSetIcon(searchIcon, "search");
-
-		const searchInput = searchInputWrapper.createEl("input", {
-			cls: "bible-search-input",
-			attr: {
-				type: "text",
-				placeholder: "Search books...",
-			}
-		});
-
-		const clearBtn = searchInputWrapper.createEl("button", {
-			cls: "bible-search-clear",
-			attr: { "aria-label": "Clear search", "title": "Clear search" }
-		});
-		clearBtn.style.display = "none";
-		this.safeSetIcon(clearBtn, "x");
-
-		// Add Browse/Search view tabs
-		const tabsContainer = searchContainer.createDiv({ cls: "bible-tabs-container" });
-		const tabsWrapper = tabsContainer.createDiv({ cls: "bible-tabs-inner" });
-		const browseTab = tabsWrapper.createEl("button", { cls: "bible-tab-btn active", text: "Browse" });
-		const searchTab = tabsWrapper.createEl("button", { cls: "bible-tab-btn", text: "Search Scripture" });
-		tabsContainer.createDiv({ cls: "bible-tabs-right-slot" });
-
-		const chapterContainer = ChapterWrapper.createEl("div", {
-			cls: "chapter-container",
-		});
-
-		const browseViewEl = chapterContainer.createDiv({ cls: "bible-browse-view" });
-		const searchViewEl = chapterContainer.createDiv({ cls: "bible-search-view" });
-		searchViewEl.style.display = "none";
-
-		// Old Testament section
-		const oldHeader = browseViewEl.createDiv({ cls: "bible-testament-header" });
-		oldHeader.createSpan({ text: "OLD TESTAMENT", cls: "bible-testament-label" });
-		const oldChevron = oldHeader.createDiv({ cls: "bible-testament-chevron" });
-		this.safeSetIcon(oldChevron, "chevron-down");
-		const oldGrid = browseViewEl.createDiv({ cls: "bible-books-grid" });
-
-		// Initial Old Testament Collapse State
-		oldGrid.style.display = this.otCollapsed ? "none" : "grid";
-		oldHeader.classList.toggle("is-collapsed", this.otCollapsed);
-
-		oldHeader.addEventListener("click", () => {
-			const isCollapsed = oldGrid.style.display === "none";
-			oldGrid.style.display = isCollapsed ? "grid" : "none";
-			oldHeader.classList.toggle("is-collapsed", !isCollapsed);
-			this.otCollapsed = !isCollapsed;
-		});
-
-		// New Testament section
-		const newHeader = browseViewEl.createDiv({ cls: "bible-testament-header" });
-		newHeader.createSpan({ text: "NEW TESTAMENT", cls: "bible-testament-label" });
-		const newChevron = newHeader.createDiv({ cls: "bible-testament-chevron" });
-		this.safeSetIcon(newChevron, "chevron-down");
-		const newGrid = browseViewEl.createDiv({ cls: "bible-books-grid" });
-
-		// Initial New Testament Collapse State
-		newGrid.style.display = this.ntCollapsed ? "none" : "grid";
-		newHeader.classList.toggle("is-collapsed", this.ntCollapsed);
-
-		newHeader.addEventListener("click", () => {
-			const isCollapsed = newGrid.style.display === "none";
-			newGrid.style.display = isCollapsed ? "grid" : "none";
-			newHeader.classList.toggle("is-collapsed", !isCollapsed);
-			this.ntCollapsed = !isCollapsed;
-		});
-
-		const noResults = browseViewEl.createDiv({
-			cls: "no-results-message",
-			text: "No matching books found"
-		});
-		noResults.style.display = "none";
-
-		// 3. Render book cards into the correct section
-		const bookElements: { book: typeof books[0]; el: HTMLElement }[] = [];
-
-		const oldTestament = books.filter(b => isOldTestament(b.bookid));
-		const newTestament = books.filter(b => !isOldTestament(b.bookid));
-
-		const addCards = (list: typeof books, grid: HTMLElement) => {
-			for (const book of list) {
-				const isBookCached = localData && (
-					localData.apiType === "bolls" || 
-					(localData.passages && localData.passages[book.bookid] && Object.keys(localData.passages[book.bookid]).length > 0)
-				);
-
-				let downloadProportion = calculateDownloadProportion(localData, book);
-
-				const card = grid.createEl("button", {
-					cls: isBookCached ? "bible-book-card is-cached" : "bible-book-card",
-					attr: { id: book.bookid.toString() }
-				});
-				card.style.setProperty("--download-proportion", downloadProportion.toString());
-				
-				const bookDisplayName = getBookDisplayName(book, this.settings.abbreviateBookNames);
-				card.createSpan({ text: bookDisplayName });
-				card.addEventListener("click", async () => {
-					this.saveCurrentScrollPosition();
-					delete this.savedScrollPositions["chapters"];
-					await this.renderChapters(book, chapterContainer, books);
-				});
-				bookElements.push({ book, el: card });
-			}
-		};
-
-		addCards(oldTestament, oldGrid);
-		addCards(newTestament, newGrid);
-
-		// 4. Live search — filters both grids, shows/hides section headers
-		const filterBooks = () => {
-			let oldVisible = 0;
-			let newVisible = 0;
-
-			bookElements.forEach(({ book, el }) => {
-				const abbr = BIBLE_BOOK_IDS[book.bookid - 1] || "";
-				const matches = book.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-				                abbr.toLowerCase().includes(searchQuery.toLowerCase());
-				el.style.display = matches ? "flex" : "none";
-				if (matches) {
-					if (isOldTestament(book.bookid)) oldVisible++;
-					else newVisible++;
-				}
-			});
-
-			// Show/hide section headers based on visibility
-			oldHeader.style.display = oldVisible > 0 ? "flex" : "none";
-			newHeader.style.display = newVisible > 0 ? "flex" : "none";
-			noResults.style.display = oldVisible === 0 && newVisible === 0 ? "block" : "none";
-
-			// Auto-expand sections during search so matching books are actually shown
-			if (searchQuery.trim().length > 0) {
-				if (oldVisible > 0) {
-					oldGrid.style.display = "grid";
-					oldHeader.classList.remove("is-collapsed");
-				}
-				if (newVisible > 0) {
-					newGrid.style.display = "grid";
-					newHeader.classList.remove("is-collapsed");
-				}
-			} else {
-				// Revert to saved collapse state when search is empty
-				oldGrid.style.display = this.otCollapsed ? "none" : "grid";
-				oldHeader.classList.toggle("is-collapsed", this.otCollapsed);
-				newGrid.style.display = this.ntCollapsed ? "none" : "grid";
-				newHeader.classList.toggle("is-collapsed", this.ntCollapsed);
-			}
-		};
-
-		let searchQuery = "";
-		let activeTab: "browse" | "search" = "browse";
-
-		browseTab.addEventListener("click", () => {
-			if (activeTab === "browse") return;
-			activeTab = "browse";
-			browseTab.classList.add("active");
-			searchTab.classList.remove("active");
-			browseViewEl.style.display = "block";
-			searchViewEl.style.display = "none";
-			searchInput.value = "";
-			searchQuery = "";
-			clearBtn.style.display = "none";
-			searchInput.placeholder = "Search books...";
-			filterBooks();
-			searchInput.focus();
-		});
-
-		searchTab.addEventListener("click", () => {
-			if (activeTab === "search") return;
-			activeTab = "search";
-			searchTab.classList.add("active");
-			browseTab.classList.remove("active");
-			browseViewEl.style.display = "none";
-			searchViewEl.style.display = "block";
-			searchInput.value = "";
-			searchQuery = "";
-			clearBtn.style.display = "none";
-			searchInput.placeholder = "Search verses (e.g. faith)...";
-			this.renderSearchHelpGuide(searchViewEl);
-			searchInput.focus();
-		});
-
-		searchInput.addEventListener("input", (e) => {
-			searchQuery = (e.target as HTMLInputElement).value;
-			clearBtn.style.display = searchQuery ? "flex" : "none";
-			if (activeTab === "browse") {
-				filterBooks();
-			} else {
-				this.performFullTextSearch(searchQuery, searchViewEl);
-			}
-		});
-
-		clearBtn.addEventListener("click", () => {
-			searchInput.value = "";
-			searchQuery = "";
-			clearBtn.style.display = "none";
-			if (activeTab === "browse") {
-				filterBooks();
-			} else {
-				this.renderSearchHelpGuide(searchViewEl);
-			}
-			searchInput.focus();
-		});
-		this.updateOfflineStatus(this.isOfflineState);
+		await this.renderer.renderBooks(books);
 	}
 
 	async renderChapters(
@@ -1105,101 +687,7 @@ export class BibleView extends ItemView {
 		chapterContainer: HTMLElement,
 		books: { bookid: number; name: string; chapters: number }[]
 	) {
-		this.logDebug(`renderChapters called for book: ${book.name} (id: ${book.bookid}, chapters: ${book.chapters}). isOfflineState=${this.isOfflineState}`);
-		this.currentView = "chapters";
-		this.activeBook = book;
-		this.activeChapterNumber = null;
-		chapterContainer.empty();
-
-		const localData = await this.plugin.readLocalTranslation(this.settings.bibleVersion);
-		const isOffline = this.isOfflineState;
-		chapterContainer.classList.toggle("is-offline", isOffline);
-
-		const wrapper = chapterContainer.parentElement;
-		if (wrapper) {
-			if (this.settings.enableOfflineAccents) {
-				wrapper.classList.add("enable-offline-accents");
-			} else {
-				wrapper.classList.remove("enable-offline-accents");
-			}
-			// Remove searchContainer if it exists
-			const search = wrapper.querySelector(".bible-search-container");
-			if (search) search.remove();
-
-			// Remove any previous header
-			const oldHeader = wrapper.querySelector(".bible-header-nav");
-			if (oldHeader) oldHeader.remove();
-			
-			// Ensure we have a clean header navigation
-			const header = wrapper.createDiv({ cls: "bible-header-nav" });
-			wrapper.insertBefore(header, chapterContainer);
-			
-			// Render the navigation inside header
-			const backBtn = header.createEl("button", {
-				cls: "bible-icon-btn",
-				attr: { "aria-label": "Back to Books", "title": "Back to Books" }
-			});
-			this.safeSetIcon(backBtn, "arrow-left");
-			backBtn.addEventListener("click", () => {
-				this.saveCurrentScrollPosition();
-				this.loadBible();
-			});
-			
-			const titleEl = header.createEl("div", { cls: "bible-header-title" });
-			titleEl.createEl("span", { text: "SELECT CHAPTER", cls: "bible-header-subtitle" });
-			const bookDisplayName = this.settings.abbreviateBookNames
-				? (BIBLE_BOOK_IDS[book.bookid - 1] || book.name)
-				: book.name;
-			titleEl.createEl("div", { text: bookDisplayName, cls: "bible-header-book-name" });
-			
-			// Just a spacer on the right so title stays centered
-			const spacer = header.createDiv();
-			spacer.style.width = "32px";
-		}
-
-		// Glassmorphic circular chapter grid
-		const chaptersGrid = chapterContainer.createDiv({ cls: "bible-chapters-grid" });
-
-		for (let i = 1; i <= book.chapters; i++) {
-			const isChapterCached = localData && (
-				localData.apiType === "bolls" ||
-				(localData.passages && localData.passages[book.bookid] && localData.passages[book.bookid][i])
-			);
-
-			const btn = chaptersGrid.createEl("button", {
-				text: i.toString(),
-				cls: isChapterCached ? "chapter-button is-cached" : "chapter-button",
-			});
-			btn.style.setProperty("--download-proportion", isChapterCached ? "1" : "0");
-			
-			btn.addEventListener("click", async () => {
-				this.logDebug(`Chapter button clicked: ${book.name} Chapter ${i}`);
-				this.saveCurrentScrollPosition();
-				chapterContainer.empty();
-				chapterContainer.createDiv({ cls: "bible-loading-indicator", text: `Loading ${book.name} Chapter ${i}...` });
-
-					try {
-						const chapterContentArray = await this.getChapterContent(this.settings.bibleVersion,
-							book.bookid,
-							i
-						);
-						chapterContainer.empty();
-						await this.processChapterContent(
-							chapterContentArray,
-							chapterContainer,
-							book,
-							i,
-							books
-						);
-					} catch (err) {
-						this.logDebug(`Failed to load ${book.name} Chapter ${i}: ${err.message || err}`);
-						chapterContainer.empty();
-						await this.renderChapters(book, chapterContainer, books);
-					}
-				});
-		}
-		this.updateOfflineStatus(this.isOfflineState);
-		this.restoreScrollPosition("chapters");
+		await this.renderer.renderChapters(book, chapterContainer, books);
 	}
 
 	async processChapterContent(
@@ -1209,968 +697,21 @@ export class BibleView extends ItemView {
 		i: number,
 		books: { bookid: number; name: string; chapters: number }[]
 	) {
-		this.logDebug(`processChapterContent called for ${book.name} Chapter ${i}. separateVersesSidecar=${this.settings.separateVersesSidecar}`);
-		this.currentView = "verses";
-		this.activeBook = book;
-		this.activeChapterNumber = i;
-		const wrapper = chapterContainer.parentElement;
-		if (wrapper) {
-			// Remove searchContainer if it exists
-			const search = wrapper.querySelector(".bible-search-container");
-			if (search) search.remove();
-			
-			// Remove any previous header
-			const oldHeader = wrapper.querySelector(".bible-header-nav");
-			if (oldHeader) oldHeader.remove();
-
-			// Ensure we have a clean header navigation
-			const header = wrapper.createDiv({ cls: "bible-header-nav" });
-			wrapper.insertBefore(header, chapterContainer);
-			
-			// Render the navigation inside header
-			const backBtn = header.createEl("button", {
-				cls: "bible-icon-btn",
-				attr: { "aria-label": "Back to Chapters", "title": "Back to Chapters" }
-			});
-			this.safeSetIcon(backBtn, "arrow-left");
-			backBtn.addEventListener("click", async () => {
-				this.logDebug(`Back to Chapters clicked. Going back to chapter selection for book: ${book.name}`);
-				this.saveCurrentScrollPosition();
-				chapterContainer.empty();
-				await this.renderChapters(book, chapterContainer, books);
-			});
-			
-			const titleEl = header.createEl("div", { cls: "bible-header-title" });
-			const bookDisplayName = this.settings.abbreviateBookNames
-				? (BIBLE_BOOK_IDS[book.bookid - 1] || book.name)
-				: book.name;
-			titleEl.createEl("span", { text: bookDisplayName.toUpperCase(), cls: "bible-header-subtitle" });
-			titleEl.createEl("div", { text: `Chapter ${i}`, cls: "bible-header-book-chapter" });
-			
-			// Right side controls: Prev & Next Chapter!
-			const rightControls = header.createDiv({ cls: "bible-header-right-controls" });
-			
-			const selectModeBtn = rightControls.createEl("button", {
-				cls: "bible-icon-btn bible-select-mode-btn",
-				attr: { "aria-label": "Toggle Select Mode", "title": "Toggle Select Mode" }
-			});
-			this.safeSetIcon(selectModeBtn, "highlighter");
-			if (this.tapSelectMode) {
-				selectModeBtn.classList.add("is-active");
-			}
-			selectModeBtn.addEventListener("click", (e) => {
-				e.stopPropagation();
-				this.tapSelectMode = !this.tapSelectMode;
-				selectModeBtn.classList.toggle("is-active", this.tapSelectMode);
-				if (!this.tapSelectMode) {
-					this.clearSelectedVerses();
-				}
-				new Notice(this.tapSelectMode ? "Tap-to-Select Mode enabled. Tap verses to highlight." : "Tap-to-Select Mode disabled.");
-			});
-			
-			const prevBtn = rightControls.createEl("button", {
-				cls: "bible-icon-btn",
-				attr: { "aria-label": "Previous Chapter", "title": "Previous Chapter" }
-			});
-			this.safeSetIcon(prevBtn, "chevron-left");
-
-			const localData = await this.plugin.readLocalTranslation(this.settings.bibleVersion);
-			const isChapterAvailable = (bId: number, cNum: number) => {
-				if (!this.isOfflineState) return true;
-				if (!localData) return false;
-				if (localData.apiType === "bolls") return true;
-				const available = !!(localData.passages?.[bId]?.[cNum]?.isFullyCached);
-				this.logDebug(`Checking offline availability for Book ${bId} Chapter ${cNum}: ${available}`);
-				return available;
-			};
-			
-			if (book.bookid === 1 && i === 1) {
-				this.logDebug("Disabling prevBtn: reached start of Bible (Genesis 1).");
-				prevBtn.setAttribute("disabled", "true");
-				prevBtn.style.opacity = "0.3";
-				prevBtn.style.pointerEvents = "none";
-			} else {
-				let prevBookId = book.bookid;
-				let prevChapterNum = i - 1;
-				if (prevChapterNum < 1) {
-					prevBookId = book.bookid - 1;
-					const prevBook = books[prevBookId - 1];
-					prevChapterNum = prevBook ? prevBook.chapters : 1;
-				}
-				const prevAvailable = isChapterAvailable(prevBookId, prevChapterNum);
-				this.logDebug(`Prev chapter details: Book ID ${prevBookId}, Chapter ${prevChapterNum}. Available: ${prevAvailable}`);
-				if (!prevAvailable) {
-					this.logDebug("Disabling prevBtn: previous chapter is not cached/downloaded offline.");
-					prevBtn.setAttribute("disabled", "true");
-					prevBtn.style.opacity = "0.3";
-					prevBtn.style.pointerEvents = "none";
-				}
-			}
-			
-			prevBtn.addEventListener("click", async () => {
-				let newChapter = i - 1;
-				this.logDebug(`prevBtn clicked. currentChapter=${i}, newChapter=${newChapter}`);
-				
-				// Empty container and show loading state immediately to prevent double-clicks
-				chapterContainer.empty();
-
-				try {
-					if (newChapter < 1) {
-						if (book.bookid > 1) {
-							const prevBook = books[book.bookid - 2];
-							chapterContainer.createDiv({ cls: "bible-loading-indicator", text: `Loading ${prevBook.name} Chapter ${prevBook.chapters}...` });
-							this.logDebug(`Moving back to previous book: ${prevBook.name} Chapter ${prevBook.chapters}`);
-							const prevChapterContent = await this.getChapterContent(this.settings.bibleVersion,
-								prevBook.bookid,
-								prevBook.chapters
-							);
-							chapterContainer.empty();
-							await this.processChapterContent(
-								prevChapterContent,
-								chapterContainer,
-								prevBook,
-								prevBook.chapters,
-								books
-							);
-						}
-					} else {
-						chapterContainer.createDiv({ cls: "bible-loading-indicator", text: `Loading ${book.name} Chapter ${newChapter}...` });
-						this.logDebug(`Moving back to previous chapter of current book: Chapter ${newChapter}`);
-						const previousChapterContent = await this.getChapterContent(this.settings.bibleVersion,
-							book.bookid,
-							newChapter
-						);
-						chapterContainer.empty();
-						await this.processChapterContent(
-							previousChapterContent,
-							chapterContainer,
-							book,
-							newChapter,
-							books
-						);
-					}
-				} catch (err) {
-					this.logDebug(`Failed to navigate to previous chapter: ${err.message || err}`);
-					chapterContainer.empty();
-					await this.processChapterContent(chapter, chapterContainer, book, i, books);
-				}
-			});
-			
-			const nextBtn = rightControls.createEl("button", {
-				cls: "bible-icon-btn",
-				attr: { "aria-label": "Next Chapter", "title": "Next Chapter" }
-			});
-			this.safeSetIcon(nextBtn, "chevron-right");
-			
-			if (book.bookid === books.length && i === book.chapters) {
-				this.logDebug("Disabling nextBtn: reached end of Bible (Revelation 22).");
-				nextBtn.setAttribute("disabled", "true");
-				nextBtn.style.opacity = "0.3";
-				nextBtn.style.pointerEvents = "none";
-			} else {
-				let nextBookId = book.bookid;
-				let nextChapterNum = i + 1;
-				if (nextChapterNum > book.chapters) {
-					nextBookId = book.bookid + 1;
-					nextChapterNum = 1;
-				}
-				const nextAvailable = isChapterAvailable(nextBookId, nextChapterNum);
-				this.logDebug(`Next chapter details: Book ID ${nextBookId}, Chapter ${nextChapterNum}. Available: ${nextAvailable}`);
-				if (!nextAvailable) {
-					this.logDebug("Disabling nextBtn: next chapter is not cached/downloaded offline.");
-					nextBtn.setAttribute("disabled", "true");
-					nextBtn.style.opacity = "0.3";
-					nextBtn.style.pointerEvents = "none";
-				}
-			}
-			
-			nextBtn.addEventListener("click", async () => {
-				let newChapter = i + 1;
-				this.logDebug(`nextBtn clicked. currentChapter=${i}, newChapter=${newChapter}`);
-				
-				// Empty container and show loading state immediately to prevent double-clicks
-				chapterContainer.empty();
-
-				try {
-					if (newChapter > book.chapters) {
-						if (book.bookid < books.length) {
-							const newBookId = book.bookid + 1;
-							const newBook = books[newBookId - 1];
-							chapterContainer.createDiv({ cls: "bible-loading-indicator", text: `Loading ${newBook.name} Chapter 1...` });
-							this.logDebug(`Moving forward to next book: ${newBook.name} Chapter 1`);
-							newChapter = 1;
-							const nextChapterContent = await this.getChapterContent(this.settings.bibleVersion,
-								newBookId,
-								newChapter
-							);
-							chapterContainer.empty();
-							await this.processChapterContent(
-								nextChapterContent,
-								chapterContainer,
-								newBook,
-								newChapter,
-								books
-							);
-						}
-					} else {
-						chapterContainer.createDiv({ cls: "bible-loading-indicator", text: `Loading ${book.name} Chapter ${newChapter}...` });
-						this.logDebug(`Moving forward to next chapter of current book: Chapter ${newChapter}`);
-						const nextChapterContent = await this.getChapterContent(this.settings.bibleVersion,
-							book.bookid,
-							newChapter
-						);
-						chapterContainer.empty();
-						await this.processChapterContent(
-							nextChapterContent,
-							chapterContainer,
-							book,
-							newChapter,
-							books
-						);
-					}
-				} catch (err) {
-					this.logDebug(`Failed to navigate to next chapter: ${err.message || err}`);
-					chapterContainer.empty();
-					await this.processChapterContent(chapter, chapterContainer, book, i, books);
-				}
-			});
-		}
-
-		// Swipe Gestures for Chapter Navigation
-		let touchStartX = 0;
-		let touchStartY = 0;
-		chapterContainer.addEventListener("touchstart", (e) => {
-			touchStartX = e.changedTouches[0].screenX;
-			touchStartY = e.changedTouches[0].screenY;
-		}, { passive: true });
-
-		chapterContainer.addEventListener("touchend", (e) => {
-			const touchEndX = e.changedTouches[0].screenX;
-			const touchEndY = e.changedTouches[0].screenY;
-			const diffX = touchEndX - touchStartX;
-			const diffY = touchEndY - touchStartY;
-
-			if (Math.abs(diffX) > 80 && Math.abs(diffY) < 40) {
-				if (diffX > 0) {
-					const prevBtnEl = wrapper?.querySelector('[aria-label="Previous Chapter"]') as HTMLElement;
-					if (prevBtnEl && !prevBtnEl.hasAttribute("disabled")) {
-						prevBtnEl.click();
-					}
-				} else {
-					const nextBtnEl = wrapper?.querySelector('[aria-label="Next Chapter"]') as HTMLElement;
-					if (nextBtnEl && !nextBtnEl.hasAttribute("disabled")) {
-						nextBtnEl.click();
-					}
-				}
-			}
-		}, { passive: true });
-
-		const separate = this.settings.separateVersesSidecar !== false;
-
-		const chapterContent = chapterContainer.createEl("div", {
-			cls: separate ? "chapter-content" : "chapter-content inline-layout",
-		});
-		chapterContent.empty();
-
-		chapterContent.addEventListener("click", (e) => {
-			if (!this.tapSelectMode) return;
-			
-			const target = e.target as HTMLElement;
-			if (target.closest("button") || target.closest(".bible-verse-note-indicator")) return;
-
-			const verseEl = target.closest(".verse, .verse-inline") as HTMLElement;
-			if (verseEl) {
-				e.stopPropagation();
-				e.preventDefault();
-				const vNum = verseEl.getAttribute("data-verse");
-				if (vNum) {
-					this.toggleVerseSelection(verseEl, vNum);
-				}
-			}
-		}, true);
-
-		if (this.settings.parallelEnabled && this.settings.secondaryBibleVersion) {
-			// ── PARALLEL VIEW (Supports both Bolls.life and Premium APIs) ────────
-			await this.renderParallelColumns(chapter, chapterContainer, chapterContent, book, i, books);
-			return; // renderParallelColumns handles applySavedHighlights internally
-		}
-
-		if (chapter && ((chapter as any).isApiBible || (chapter as any).isEsvApi)) {
-			const rawHtml = (chapter as any).html;
-			const isEsv = (chapter as any).isEsvApi;
-			const parser = new DOMParser();
-			const doc = parser.parseFromString(rawHtml, "text/html");
-
-			// Clean up any extra/copyright elements returned by the API
-			doc.querySelectorAll(".extra_text, .audio, .copyright, .mp3link").forEach(el => el.remove());
-
-			if (separate) {
-				const spans = doc.querySelectorAll(isEsv ? "b.verse-num, b.chapter-num, span.chapter-num" : "span.v");
-				spans.forEach((span) => {
-					let verseNumText = isEsv ? (span.textContent?.trim() || "") : (span.getAttribute("data-number") || span.textContent || "");
-					if (isEsv) {
-						if (verseNumText.includes(":")) {
-							verseNumText = verseNumText.split(":")[1]; // Handle "1:1" -> "1"
-						} else if (span.classList.contains("chapter-num") || (span.tagName.toLowerCase() === "span" && span.classList.contains("chapter-num"))) {
-							verseNumText = "1"; // Handle "3" -> "1"
-						}
-					}
-					const verseNum = verseNumText.trim();
-					const formattedVerseNumber = convertToSuperscript(verseNum);
-
-					let text = "";
-					let next = span.nextSibling;
-					const verseClass = isEsv ? "verse-num" : "v";
-					if (!next && !isEsv && span.parentElement && span.parentElement.classList.contains("verse-span")) {
-						next = span.parentElement.nextSibling;
-					}
-					while (next && !(next instanceof Element && (
-						next.classList.contains(verseClass) || 
-						(!isEsv && next.querySelector("." + verseClass)) ||
-						next.classList.contains("chapter-num") || 
-						(next.tagName.toLowerCase() === "b" && next.classList.contains("verse-num")) ||
-						(next.tagName.toLowerCase() === "span" && next.classList.contains("chapter-num"))
-					))) {
-						text += next.textContent || "";
-						next = next.nextSibling;
-					}
-
-					let cleanText = text.trim().replace(/\n+/g, " ");
-					cleanText = cleanText.replace(/^\d+:\d+\s*/, "");
-					let displayHtml = cleanText;
-
-					if (this.settings.gospelQuotesRed && ["matthew", "mark", "luke", "john"].includes(book.name.toLowerCase())) {
-						displayHtml = displayHtml
-							.replace(/"([^"]+)"/g, '"<span style="color: red;">$1</span>"')
-							.replace(/\u201c([^\u201d]+)\u201d/g, '\u201c<span style="color: red;">$1</span>\u201d');
-					}
-
-					const formattedVerse = chapterContent.createEl("div", { 
-						cls: "verse",
-						attr: { 
-							draggable: "true",
-							"data-verse": verseNum
-						}
-					});
-					formattedVerse.innerHTML = `<span class="verse-num">${formattedVerseNumber}</span> ${displayHtml}`;
-
-					formattedVerse.addEventListener("dragstart", (e) => {
-						const uri = `obsidian://bible?book=${encodeURIComponent(book.name)}&chapter=${i}&verse=${verseNum}`;
-						const linkedVerseNum = `[${formattedVerseNumber}](${uri})`;
-						let referenceLink = "";
-						if (this.settings.verseReferenceInternalLinking) {
-							referenceLink = `[[${book.name}]] [${i}:${verseNum}](${uri})`;
-						} else {
-							const label = this.settings.verseReferenceFormat === "short"
-								? `${i}:${verseNum}`
-								: `${book.name} ${i}:${verseNum}`;
-							referenceLink = `[${label}](${uri})`;
-						}
-
-						let dragText = "";
-						if (this.settings.copyFormat === "callout") {
-							dragText = `> [!quote] ${referenceLink}\n> ${linkedVerseNum} ${cleanText}`;
-						} else {
-							if (this.settings.copyVerseReference) {
-								dragText = `${linkedVerseNum} ${cleanText}\n${this.settings.verseReferenceStyle}${referenceLink}`;
-							} else {
-								dragText = `${linkedVerseNum} ${cleanText}`;
-							}
-						}
-						if (e.dataTransfer) {
-							e.dataTransfer.setData("text/plain", dragText);
-						}
-					});
-
-					const copyBtn = formattedVerse.createEl("button", {
-						cls: "bible-verse-copy-btn",
-						attr: { "aria-label": "Copy Verse", "title": "Copy Verse" }
-					});
-					this.safeSetIcon(copyBtn, "copy");
-					copyBtn.addEventListener("click", (e) => {
-						e.stopPropagation();
-						this.renderCopyMessage(book, i, `${formattedVerseNumber} ${cleanText}`);
-					});
-
-					const highlightBtn = formattedVerse.createEl("button", {
-						cls: "bible-verse-highlight-btn",
-						attr: { "aria-label": "Highlight Verse", "title": "Highlight Verse" }
-					});
-					this.safeSetIcon(highlightBtn, "pencil");
-					highlightBtn.addEventListener("click", (e) => {
-						e.stopPropagation();
-						this.showHighlightToolbar(e, formattedVerse, book.name, i, verseNum);
-					});
-
-					// Cross-references (ESV + API.Bible) — inject <sup> markers
-					if (this.settings.showCrossReferences) {
-						const rawHtmlForCrossRef = (chapter as any).html || "";
-						const crossRefs = extractCrossReferences(rawHtmlForCrossRef);
-						if (crossRefs.length > 0) {
-							for (const cr of crossRefs) {
-								if (cr.refs.length === 0) continue;
-								const sup = formattedVerse.createEl("sup", {
-									cls: "cross-ref-marker",
-									text: cr.letter,
-									attr: { "data-refs-display": cr.refs.join(" · ") }
-								});
-								sup.addEventListener("click", (e) => {
-									e.stopPropagation();
-									if (Platform.isMobile) {
-										this.renderCrossRefDrawer(cr.refs, book.name, i);
-									}
-								});
-							}
-						}
-					}
-				});
-				// Strong's word click handler — after all verse elements are rendered
-				if (this.settings.showStrongsNumbers) {
-					chapterContent.querySelectorAll(".strongs-word").forEach((el: HTMLElement) => {
-						el.addEventListener("click", (e) => {
-							e.stopPropagation();
-							const id = el.getAttribute("data-strongs");
-							if (id) this.renderStrongsPanel(id);
-						});
-					});
-				}
-			} else {
-				// Clean the inline raw HTML of wrapper headings/copyright
-				const tempDiv = document.createElement("div");
-				tempDiv.innerHTML = rawHtml;
-				tempDiv.querySelectorAll(".extra_text, .audio, .copyright, .mp3link").forEach(el => el.remove());
-
-				let cleanHtml = tempDiv.innerHTML;
-				
-				// Strip redundant chapter:verse numeric prefix (e.g. "1:1 " or "2:1 ") at paragraph/span starts
-				cleanHtml = cleanHtml.replace(/(<p[^>]*>|<div[^>]*>|>\u00A0|>\s*)\s*(\d+):1\s+/g, '$1<span class="verse-num">¹</span>\u00A0');
-				cleanHtml = cleanHtml.replace(/(<span[^>]*class="[^"]*(chapter|v)[^"]*"[^>]*>)\s*(\d+):1\s*(<\/span>)/g, '$1¹$4');
-				
-				const inlineDiv = document.createElement("div");
-				inlineDiv.innerHTML = cleanHtml;
-				const spans = inlineDiv.querySelectorAll(isEsv ? "b.verse-num, b.chapter-num, span.chapter-num" : "span.v");
-				spans.forEach((span) => {
-					let verseNumText = isEsv ? (span.textContent?.trim() || "") : (span.getAttribute("data-number") || span.textContent || "");
-					if (isEsv) {
-						if (verseNumText.includes(":")) {
-							verseNumText = verseNumText.split(":")[1]; // Handle "1:1" -> "1"
-						} else if (span.classList.contains("chapter-num") || (span.tagName.toLowerCase() === "span" && span.classList.contains("chapter-num"))) {
-							verseNumText = "1"; // Handle "3" -> "1"
-						}
-					}
-					const verseNum = verseNumText.trim();
-					const formattedVerseNumber = convertToSuperscript(verseNum);
-					
-					// Collect all siblings up to the next verse or chapter span
-					const siblingsToWrap: Node[] = [];
-					let next = span.nextSibling;
-					const verseClass = isEsv ? "verse-num" : "v";
-					if (!next && !isEsv && span.parentElement && span.parentElement.classList.contains("verse-span")) {
-						next = span.parentElement.nextSibling;
-					}
-					
-					while (next && !(next instanceof Element && (
-						next.classList.contains(verseClass) || 
-						(!isEsv && next.querySelector("." + verseClass)) ||
-						next.classList.contains("chapter-num") || 
-						(next.tagName.toLowerCase() === "b" && next.classList.contains("verse-num")) ||
-						(next.tagName.toLowerCase() === "span" && next.classList.contains("chapter-num"))
-					))) {
-						siblingsToWrap.push(next);
-						next = next.nextSibling;
-					}
-
-					// Create the wrapper span
-					const verseWrapper = document.createElement("span");
-					verseWrapper.className = "verse-inline";
-					verseWrapper.setAttribute("data-verse", verseNum);
-					
-					// Insert wrapper before current span
-					span.parentNode?.insertBefore(verseWrapper, span);
-					
-					// Append new verse-num element inside wrapper
-					const verseNumSpan = document.createElement("span");
-					verseNumSpan.className = "verse-num";
-					verseNumSpan.textContent = formattedVerseNumber;
-					verseWrapper.appendChild(verseNumSpan);
-					verseWrapper.appendChild(document.createTextNode("\u00A0"));
-					
-					// Strip redundant 1:1 prefix on first sibling text if present
-					if (siblingsToWrap.length > 0) {
-						const firstSib = siblingsToWrap[0];
-						if (firstSib.nodeType === Node.TEXT_NODE && firstSib.textContent) {
-							firstSib.textContent = firstSib.textContent.replace(/^\s*\d+:\d+\s*/, "");
-						}
-					}
-
-					// Move sibling nodes inside wrapper
-					siblingsToWrap.forEach(sibling => {
-						verseWrapper.appendChild(sibling);
-					});
-
-					// Remove original span
-					span.remove();
-				});
-
-				// Apply Gospel quotes red formatting safely using DOM traversal to prevent HTML tag corruption
-				if (this.settings.gospelQuotesRed && ["matthew", "mark", "luke", "john"].includes(book.name.toLowerCase())) {
-					colorGospelQuotesRedInDOM(inlineDiv);
-				}
-
-				// Second-pass scanner for ESV API elements to tag elements with data-verse
-				const allEls = inlineDiv.querySelectorAll('*');
-				allEls.forEach((el: HTMLElement) => {
-					const id = el.id || "";
-					const match = id.match(/^[pv](\d{2})(\d{3})(\d{3})/);
-					if (match) {
-						const vNum = parseInt(match[3]).toString();
-						// Check if this element contains any descendant element that belongs to a different verse
-						const descendants = el.querySelectorAll('*');
-						let hasDifferentVerse = false;
-						for (let j = 0; j < descendants.length; j++) {
-							const desc = descendants[j] as HTMLElement;
-							const descId = desc.id || "";
-							const descMatch = descId.match(/^[pv](\d{2})(\d{3})(\d{3})/);
-							if (descMatch) {
-								const descVNum = parseInt(descMatch[3]).toString();
-								if (descVNum !== vNum) {
-									hasDifferentVerse = true;
-									break;
-								}
-							}
-							const descDataVerse = desc.getAttribute("data-verse");
-							if (descDataVerse && descDataVerse !== vNum) {
-								hasDifferentVerse = true;
-								break;
-							}
-						}
-						if (!hasDifferentVerse) {
-							el.setAttribute("data-verse", vNum);
-							el.classList.add("verse-inline");
-						}
-					}
-				});
-				
-				chapterContent.innerHTML = inlineDiv.innerHTML;
-			}
-		} else {
-			if (separate) {
-				for (const verse of chapter) {
-					const formattedVerseNumber = convertToSuperscript(verse.verse);
-					let displayHtml = verse.text.replace(/^\d+:\d+\s*/, "");
-					const cleanText = displayHtml.replace(/<br\s*\/?>/gi, " ").replace(/<[^>]*>?/gm, "");
-
-					// Strong's concordance — KJV/Bolls.life only
-					if (this.settings.showStrongsNumbers && (displayHtml.includes("<H") || displayHtml.includes("<S") || displayHtml.includes("<G"))) {
-						displayHtml = renderStrongsHtml(displayHtml, book.bookid >= 40);
-					}
-
-					if (this.settings.gospelQuotesRed && ["matthew", "mark", "luke", "john"].includes(book.name.toLowerCase())) {
-						displayHtml = displayHtml
-							.replace(/"([^"]+)"/g, '"<span style="color: red;">$1</span>"')
-							.replace(/\u201c([^\u201d]+)\u201d/g, '\u201c<span style="color: red;">$1</span>\u201d');
-					}
-
-					const formattedVerse = chapterContent.createEl("div", { 
-						cls: "verse",
-						attr: { 
-							draggable: "true",
-							"data-verse": verse.verse
-						}
-					});
-					formattedVerse.innerHTML = `<span class="verse-num">${formattedVerseNumber}</span> ${displayHtml}`;
-
-					formattedVerse.addEventListener("dragstart", (e) => {
-						const uri = `obsidian://bible?book=${encodeURIComponent(book.name)}&chapter=${i}&verse=${verse.verse}`;
-						const linkedVerseNum = `[${formattedVerseNumber}](${uri})`;
-						let referenceLink = "";
-						if (this.settings.verseReferenceInternalLinking) {
-							referenceLink = `[[${book.name}]] [${i}:${verse.verse}](${uri})`;
-						} else {
-							const label = this.settings.verseReferenceFormat === "short"
-								? `${i}:${verse.verse}`
-								: `${book.name} ${i}:${verse.verse}`;
-							referenceLink = `[${label}](${uri})`;
-						}
-
-						let dragText = "";
-						if (this.settings.copyFormat === "callout") {
-							dragText = `> [!quote] ${referenceLink}\n> ${linkedVerseNum} ${cleanText}`;
-						} else {
-							if (this.settings.copyVerseReference) {
-								dragText = `${linkedVerseNum} ${cleanText}\n${this.settings.verseReferenceStyle}${referenceLink}`;
-							} else {
-								dragText = `${linkedVerseNum} ${cleanText}`;
-							}
-						}
-						if (e.dataTransfer) {
-							e.dataTransfer.setData("text/plain", dragText);
-						}
-					});
-
-					const copyBtn = formattedVerse.createEl("button", {
-						cls: "bible-verse-copy-btn",
-						attr: { "aria-label": "Copy Verse", "title": "Copy Verse" }
-					});
-					this.safeSetIcon(copyBtn, "copy");
-					copyBtn.addEventListener("click", (e) => {
-						e.stopPropagation();
-						this.renderCopyMessage(book, i, `${formattedVerseNumber} ${cleanText}`);
-					});
-
-					const highlightBtn = formattedVerse.createEl("button", {
-						cls: "bible-verse-highlight-btn",
-						attr: { "aria-label": "Highlight Verse", "title": "Highlight Verse" }
-					});
-					this.safeSetIcon(highlightBtn, "pencil");
-					highlightBtn.addEventListener("click", (e) => {
-						e.stopPropagation();
-						this.showHighlightToolbar(e, formattedVerse, book.name, i, verse.verse);
-					});
-				}
-			} else {
-				// Inline / paragraph mode — inject all verse HTML as one continuous stream
-				// so translation formatting (br, i, b, paragraphs) flows naturally
-				let inlineHTML = "";
-				for (const verse of chapter) {
-					const formattedVerseNumber = convertToSuperscript(verse.verse);
-
-					let displayHtml = verse.text.replace(/^\d+:\d+\s*/, "");
-					if (this.settings.showStrongsNumbers && (displayHtml.includes("<H") || displayHtml.includes("<S") || displayHtml.includes("<G"))) {
-						displayHtml = renderStrongsHtml(displayHtml, book.bookid >= 40);
-					}
-					if (this.settings.gospelQuotesRed && ["matthew", "mark", "luke", "john"].includes(book.name.toLowerCase())) {
-						displayHtml = displayHtml
-							.replace(/"([^"]+)"/g, '"<span style="color: red;">$1</span>"')
-							.replace(/\u201c([^\u201d]+)\u201d/g, '\u201c<span style="color: red;">$1</span>\u201d');
-					}
-
-					inlineHTML += `<span class="verse-inline" data-verse="${verse.verse}"><span class="verse-num">${formattedVerseNumber}</span>\u00A0${displayHtml}</span> `;
-				}
-				chapterContent.innerHTML = inlineHTML;
-			}
-		}
-
-		// Strong's word click handler (Bolls separate and inline paths)
-		if (this.settings.showStrongsNumbers) {
-			chapterContent.querySelectorAll(".strongs-word").forEach((el: HTMLElement) => {
-				el.addEventListener("click", (e) => {
-					e.stopPropagation();
-					const id = el.getAttribute("data-strongs");
-					if (id) this.renderStrongsPanel(id);
-				});
-			});
-		}
-		
-		chapterContent.addEventListener("copy", (e: ClipboardEvent) => {
-			const selection = document.getSelection();
-			if (selection && !selection.isCollapsed) {
-				e.preventDefault(); 
-				this.renderCopyMessage(book, i, selection.toString()); 
-			}
-		});
-
-		// Bottom navigation controls row so user can change chapter when reaching the end of verses
-		const bottomControls = chapterContainer.createDiv({ cls: "bible-view-controls-bottom" });
-		
-		const bottomPrevBtn = bottomControls.createEl("button", {
-			cls: "bible-icon-btn",
-			attr: { "aria-label": "Previous Chapter", "title": "Previous Chapter" }
-		});
-		this.safeSetIcon(bottomPrevBtn, "chevron-left");
-		if (book.bookid === 1 && i === 1) {
-			bottomPrevBtn.setAttribute("disabled", "true");
-			bottomPrevBtn.style.opacity = "0.3";
-			bottomPrevBtn.style.pointerEvents = "none";
-		}
-		bottomPrevBtn.addEventListener("click", async () => {
-			let newChapter = i - 1;
-			if (newChapter < 1) {
-				if (book.bookid > 1) {
-					const prevBook = books[book.bookid - 2];
-					const prevChapterContent = await this.getChapterContent(this.settings.bibleVersion,
-						prevBook.bookid,
-						prevBook.chapters
-					);
-					chapterContainer.empty();
-					this.processChapterContent(
-						prevChapterContent,
-						chapterContainer,
-						prevBook,
-						prevBook.chapters,
-						books
-					);
-				}
-			} else {
-				const previousChapterContent = await this.getChapterContent(this.settings.bibleVersion,
-					book.bookid,
-					newChapter
-				);
-				chapterContainer.empty();
-				this.processChapterContent(
-					previousChapterContent,
-					chapterContainer,
-					book,
-					newChapter,
-					books
-				);
-			}
-		});
-		
-		const bottomBackBtn = bottomControls.createEl("button", {
-			cls: "bible-icon-btn",
-			attr: { "aria-label": "Back to Books", "title": "Back to Books" }
-		});
-		this.safeSetIcon(bottomBackBtn, "book-open");
-		bottomBackBtn.addEventListener("click", () => {
-			this.onOpen();
-		});
-		
-		const bottomNextBtn = bottomControls.createEl("button", {
-			cls: "bible-icon-btn",
-			attr: { "aria-label": "Next Chapter", "title": "Next Chapter" }
-		});
-		this.safeSetIcon(bottomNextBtn, "chevron-right");
-		if (book.bookid === books.length && i === book.chapters) {
-			bottomNextBtn.setAttribute("disabled", "true");
-			bottomNextBtn.style.opacity = "0.3";
-			bottomNextBtn.style.pointerEvents = "none";
-		}
-		bottomNextBtn.addEventListener("click", async () => {
-			let newChapter = i + 1;
-			if (newChapter > book.chapters) {
-				if (book.bookid < books.length) {
-					const newBookId = book.bookid + 1;
-					const newBook = books[newBookId - 1];
-					newChapter = 1;
-					const nextChapterContent = await this.getChapterContent(this.settings.bibleVersion,
-						newBookId,
-						newChapter
-					);
-					chapterContainer.empty();
-					this.processChapterContent(
-						nextChapterContent,
-						chapterContainer,
-						newBook,
-						newChapter,
-						books
-					);
-				}
-			} else {
-				const nextChapterContent = await this.getChapterContent(this.settings.bibleVersion,
-					book.bookid,
-					newChapter
-				);
-				chapterContainer.empty();
-				this.processChapterContent(
-					nextChapterContent,
-					chapterContainer,
-					book,
-					newChapter,
-					books
-				);
-			}
-		});
-
-		this.applySavedHighlights(chapterContent, book.name, i);
-		
-		chapterContent.addEventListener("click", (e) => {
-			const selection = document.getSelection();
-			if (selection && !selection.isCollapsed) return;
-			const target = e.target as HTMLElement;
-			const verseEl = target.closest(".verse") || target.closest(".verse-inline");
-			if (verseEl) {
-				const vNum = verseEl.getAttribute("data-verse");
-				if (vNum) {
-					this.showHighlightToolbar(e, verseEl as HTMLElement, book.name, i, vNum);
-				}
-			}
-		});
-
-		chapterContent.addEventListener("mouseup", (e) => {
-			const toolbar = document.querySelector(".bible-highlight-toolbar");
-			if (toolbar && toolbar.contains(e.target as Node)) {
-				return;
-			}
-			setTimeout(() => {
-				const selection = document.getSelection();
-				if (selection && !selection.isCollapsed) {
-					this.logDebug(`mouseup text selection captured: "${selection.toString().trim()}"`);
-					const range = selection.getRangeAt(0);
-					const verseEls: HTMLElement[] = [];
-					chapterContent.querySelectorAll(".verse, .verse-inline").forEach((el: HTMLElement) => {
-						if (selection.containsNode(el, true)) {
-							verseEls.push(el);
-						}
-					});
-					this.logDebug(`Overlapping verses count for selection: ${verseEls.length}`);
-					if (verseEls.length > 0) {
-						const rect = range.getBoundingClientRect();
-						this.showMultiVerseHighlightToolbar(rect, verseEls, range, book.name, i);
-					}
-				}
-			}, 50);
-		});
+		await this.renderer.processChapterContent(chapter, chapterContainer, book, i, books);
 	}
 
-	/**
-	 * Renders a mobile bottom-drawer showing cross-reference passages for a clicked
-	 * cross-reference marker. Each reference is a tappable card that navigates to that passage.
-	 */
 	renderCrossRefDrawer(refs: string[], bookName: string, chapter: number) {
-		const existing = document.querySelector(".cross-ref-drawer");
-		if (existing) existing.remove();
-
-		const drawer = document.createElement("div");
-		drawer.className = "cross-ref-drawer";
-
-		const handle = drawer.createDiv({ cls: "cross-ref-drawer-handle" });
-		const title = drawer.createDiv({ cls: "cross-ref-drawer-title", text: "Cross References" });
-		const list = drawer.createDiv({ cls: "cross-ref-drawer-list" });
-
-		for (const ref of refs) {
-			const item = list.createDiv({ cls: "cross-ref-drawer-item", text: ref });
-			item.addEventListener("click", async () => {
-				drawer.remove();
-				// Parse "Book Chapter:Verse" e.g. "Rom 5:8"
-				const m = ref.match(/^(.+?)\s+(\d+):(\d+)/);
-				if (m) {
-					await this.navigateToPassage(m[1], parseInt(m[2]), parseInt(m[3]));
-				}
-			});
-		}
-
-		document.body.appendChild(drawer);
-		requestAnimationFrame(() => drawer.classList.add("is-open"));
-
-		const clickAway = (e: MouseEvent) => {
-			if (!drawer.contains(e.target as Node)) {
-				drawer.classList.remove("is-open");
-				setTimeout(() => drawer.remove(), 300);
-				document.removeEventListener("mousedown", clickAway);
-			}
-		};
-		document.addEventListener("mousedown", clickAway);
+		this.renderer.renderCrossRefDrawer(refs, bookName, chapter);
 	}
 
-	/**
-	 * Fetches a Strong's concordance definition from the Bible Hub API (online only)
-	 * and renders it in a slide-in panel anchored to the right side of the view.
-	 * Caches results in `strongsDefinitionCache` to avoid repeated network calls.
-	 */
 	async renderStrongsPanel(strongsId: string) {
-		const existing = document.querySelector(".strongs-panel");
-		if (existing) existing.remove();
-
-		const panel = document.createElement("div");
-		panel.className = "strongs-panel";
-
-		const header = panel.createDiv({ cls: "strongs-panel-header" });
-		header.createSpan({ cls: "strongs-panel-id", text: strongsId });
-
-		const closeBtn = header.createEl("button", { cls: "strongs-panel-close", text: "✕" });
-		closeBtn.addEventListener("click", () => {
-			panel.classList.remove("is-open");
-			setTimeout(() => panel.remove(), 300);
-		});
-
-		const body = panel.createDiv({ cls: "strongs-definition-card" });
-		body.createDiv({ cls: "strongs-loading", text: "Loading definition…" });
-
-		document.body.appendChild(panel);
-		requestAnimationFrame(() => panel.classList.add("is-open"));
-
-		try {
-			let data: any;
-			if (this.strongsDefinitionCache.has(strongsId)) {
-				data = this.strongsDefinitionCache.get(strongsId);
-			} else {
-				const lang = strongsId.startsWith("H") ? "hebrew" : "greek";
-				const num = strongsId.slice(1);
-				const response = await requestUrl(`https://api.biblehub.com/strongs/${lang}/${num}`);
-				if (response.status !== 200) throw new Error(`HTTP ${response.status}`);
-				data = response.json;
-				this.strongsDefinitionCache.set(strongsId, data);
-			}
-
-			body.empty();
-			const word = data?.word || data?.translit || strongsId;
-			body.createDiv({ cls: "strongs-word-heading", text: word });
-			if (data?.translit && data.translit !== word) {
-				body.createDiv({ cls: "strongs-transliteration", text: data.translit });
-			}
-			if (data?.pos) {
-				body.createDiv({ cls: "strongs-part-of-speech", text: data.pos });
-			}
-			const defText = data?.definition || data?.meaning || data?.kjv_def || "No definition found.";
-			body.createDiv({ cls: "strongs-definition", text: defText });
-		} catch (err) {
-			body.empty();
-			body.createDiv({ cls: "strongs-error", text: `Unable to load definition for ${strongsId}. Please check your internet connection.` });
-			this.logDebug(`Strong's fetch failed for ${strongsId}: ${err.message || err}`);
-		}
+		await this.renderer.renderStrongsPanel(strongsId);
 	}
 
-	/**
-	 * Normalizes chapter content from either Bolls.life array or Premium API html into a standard
-	 * array of verse objects.
-	 */
 	normalizeChapterToVerses(chapterData: any): { verse: string; text: string }[] {
-		if (!chapterData) return [];
-		if (Array.isArray(chapterData)) {
-			return chapterData.map(v => ({ verse: v.verse.toString(), text: v.text }));
-		}
-		
-		if (chapterData.isEsvApi || chapterData.isApiBible) {
-			const rawHtml = chapterData.html;
-			const isEsv = chapterData.isEsvApi;
-			const parser = new DOMParser();
-			const doc = parser.parseFromString(rawHtml, "text/html");
-			doc.querySelectorAll(".extra_text, .audio, .copyright, .mp3link").forEach(el => el.remove());
-
-			const spans = doc.querySelectorAll(isEsv ? "b.verse-num, b.chapter-num, span.chapter-num" : "span.v");
-			const parsed: { verse: string; text: string }[] = [];
-			spans.forEach((span) => {
-				let verseNumText = isEsv ? (span.textContent?.trim() || "") : (span.getAttribute("data-number") || span.textContent || "");
-				if (isEsv) {
-					if (verseNumText.includes(":")) {
-						verseNumText = verseNumText.split(":")[1];
-					} else if (span.classList.contains("chapter-num") || (span.tagName.toLowerCase() === "span" && span.classList.contains("chapter-num"))) {
-						verseNumText = "1";
-					}
-				}
-				const verseNum = verseNumText.trim();
-				if (!verseNum) return;
-
-				let text = "";
-				let next = span.nextSibling;
-				const verseClass = isEsv ? "verse-num" : "v";
-				if (!next && !isEsv && span.parentElement && span.parentElement.classList.contains("verse-span")) {
-					next = span.parentElement.nextSibling;
-				}
-				while (next && !(next instanceof Element && (
-					next.classList.contains(verseClass) || 
-					(!isEsv && next.querySelector("." + verseClass)) ||
-					next.classList.contains("chapter-num") || 
-					(next.tagName.toLowerCase() === "b" && next.classList.contains("verse-num")) ||
-					(next.tagName.toLowerCase() === "span" && next.classList.contains("chapter-num"))
-				))) {
-					text += next.textContent || "";
-					next = next.nextSibling;
-				}
-				parsed.push({ verse: verseNum, text: text.trim().replace(/\n+/g, " ") });
-			});
-			return parsed;
-		}
-		
-		return [];
+		return this.renderer.normalizeChapterToVerses(chapterData);
 	}
 
-	/**
-	 * Renders the chapter in two-column parallel layout supporting both Bolls.life and Premium APIs.
-	 * At widths < 480px a tab-switcher replaces the grid (ADR-007).
-	 * Utilizes CSS grid rows to keep both columns locked to the same verse without bouncy scroll handlers.
-	 */
 	async renderParallelColumns(
 		primaryChapter: any,
 		chapterContainer: HTMLElement,
@@ -2179,111 +720,19 @@ export class BibleView extends ItemView {
 		chapterNum: number,
 		books: { bookid: number; name: string; chapters: number }[]
 	) {
-		const secondary = this.settings.secondaryBibleVersion;
-		let secondaryChapterRaw: any = null;
-		try {
-			secondaryChapterRaw = await this.getChapterContent(secondary, book.bookid, chapterNum);
-		} catch (err) {
-			this.logDebug(`Parallel secondary fetch failed: ${err.message || err}`);
-		}
-
-		const containerWidth = chapterContainer.clientWidth || 480;
-		const isNarrow = containerWidth < 480;
-
-		const primaryVerses = this.normalizeChapterToVerses(primaryChapter);
-		const secondaryVerses = this.normalizeChapterToVerses(secondaryChapterRaw);
-
-		if (isNarrow) {
-			// Tab layout for narrow panels
-			const tabBar = chapterContent.createDiv({ cls: "parallel-tab-bar" });
-			const primaryTab = tabBar.createEl("button", {
-				cls: "parallel-tab-btn active",
-				text: this.settings.bibleVersion
-			});
-			const secondaryTab = tabBar.createEl("button", {
-				cls: "parallel-tab-btn",
-				text: secondary
-			});
-
-			const primaryCol = chapterContent.createDiv({ cls: "chapter-column" });
-			const secondaryCol = chapterContent.createDiv({ cls: "chapter-column" });
-			secondaryCol.style.display = "none";
-
-			this.fillColumn(primaryCol, primaryVerses, book, chapterNum);
-			this.fillColumn(secondaryCol, secondaryVerses, book, chapterNum);
-
-			primaryTab.addEventListener("click", () => {
-				primaryTab.classList.add("active");
-				secondaryTab.classList.remove("active");
-				primaryCol.style.display = "";
-				secondaryCol.style.display = "none";
-			});
-			secondaryTab.addEventListener("click", () => {
-				secondaryTab.classList.add("active");
-				primaryTab.classList.remove("active");
-				secondaryCol.style.display = "";
-				primaryCol.style.display = "none";
-			});
-		} else {
-			// Side-by-side grid layout (Perfect verse-by-verse alignment via CSS grid)
-			const grid = chapterContent.createDiv({ cls: "parallel-container" });
-
-			grid.createDiv({ cls: "chapter-column-header", text: this.settings.bibleVersion });
-			grid.createDiv({ cls: "chapter-column-header", text: secondary });
-
-			// Collect all verse numbers from both chapters
-			const allVerses = new Set<string>();
-			primaryVerses.forEach(v => allVerses.add(v.verse));
-			secondaryVerses.forEach(v => allVerses.add(v.verse));
-
-			// Sort verse numbers numerically
-			const sortedVerses = Array.from(allVerses).sort((a, b) => {
-				const aNum = parseInt(a);
-				const bNum = parseInt(b);
-				if (isNaN(aNum) || isNaN(bNum)) return a.localeCompare(b);
-				return aNum - bNum;
-			});
-
-			for (const vNum of sortedVerses) {
-				const primaryVerse = primaryVerses.find(v => v.verse === vNum);
-				const secondaryVerse = secondaryVerses.find(v => v.verse === vNum);
-
-				// Render primary side
-				if (primaryVerse) {
-					this.renderParallelVerseEl(grid, primaryVerse, book, chapterNum, true);
-				} else {
-					grid.createDiv({ cls: "verse parallel-empty-verse" });
-				}
-
-				// Render secondary side
-				if (secondaryVerse) {
-					this.renderParallelVerseEl(grid, secondaryVerse, book, chapterNum, false);
-				} else {
-					grid.createDiv({ cls: "verse parallel-empty-verse" });
-				}
-			}
-		}
-
-		this.applySavedHighlights(chapterContent, book.name, chapterNum);
+		await this.renderer.renderParallelColumns(primaryChapter, chapterContainer, chapterContent, book, chapterNum, books);
 	}
 
-	/**
-	 * Helper: renders a flat list of normalized verses into a column element (narrow tab layout).
-	 */
 	fillColumn(
 		col: HTMLElement,
 		verses: { verse: string; text: string }[],
 		book: { bookid: number; name: string; chapters: number },
-		chapterNum: number
+		chapterNum: number,
+		isPrimary: boolean
 	) {
-		for (const verse of verses) {
-			this.renderParallelVerseEl(col, verse, book, chapterNum, true);
-		}
+		this.renderer.fillColumn(col, verses, book, chapterNum, isPrimary);
 	}
 
-	/**
-	 * Renders a single verse in parallel view, applying Strong's rendering and click events.
-	 */
 	renderParallelVerseEl(
 		parent: HTMLElement,
 		verse: { verse: string; text: string },
@@ -2291,31 +740,7 @@ export class BibleView extends ItemView {
 		chapterNum: number,
 		isPrimary: boolean
 	) {
-		const formattedVerseNumber = convertToSuperscript(verse.verse);
-		let displayHtml = verse.text.replace(/^\d+:\d+\s*/, "");
-		if (this.settings.showStrongsNumbers && (displayHtml.includes("<H") || displayHtml.includes("<S") || displayHtml.includes("<G"))) {
-			displayHtml = renderStrongsHtml(displayHtml, book.bookid >= 40);
-		}
-		if (this.settings.gospelQuotesRed && ["matthew", "mark", "luke", "john"].includes(book.name.toLowerCase())) {
-			displayHtml = displayHtml
-				.replace(/"([^"]+)"/g, '"<span style="color: red;">$1</span>"')
-				.replace(/\u201c([^\u201d]+)\u201d/g, '\u201c<span style="color: red;">$1</span>\u201d');
-		}
-		const verseEl = parent.createEl("div", {
-			cls: "verse",
-			attr: { "data-verse": verse.verse }
-		});
-		verseEl.innerHTML = `<span class="verse-num">${formattedVerseNumber}</span> ${displayHtml}`;
-		
-		if (this.settings.showStrongsNumbers) {
-			verseEl.querySelectorAll(".strongs-word").forEach((el: HTMLElement) => {
-				el.addEventListener("click", (e) => {
-					e.stopPropagation();
-					const id = el.getAttribute("data-strongs");
-					if (id) this.renderStrongsPanel(id);
-				});
-			});
-		}
+		this.renderer.renderParallelVerseEl(parent, verse, book, chapterNum, isPrimary);
 	}
 
 	renderCopyMessage(
@@ -2323,37 +748,11 @@ export class BibleView extends ItemView {
 		chapter: number,
 		accumulatedVerseText: string
 	) {
-		const result = compileCopyMessage(book.name, chapter, accumulatedVerseText, this.settings);
-		if (!result.finalText) return;
-
-		copyToClipboard(result.finalText);
-
-		// Show a single consolidated Notice
-		new Notice(
-			`Copied ${book.name} ${chapter}:${result.rangeStr} to clipboard`
-		);
+		this.renderer.renderCopyMessage(book, chapter, accumulatedVerseText);
 	}
 
 	renderSearchHelpGuide(el: HTMLElement) {
-		el.empty();
-		const helpContainer = el.createDiv({ cls: "bible-search-help" });
-		helpContainer.createEl("h3", { text: "Advanced Search Operators", cls: "bible-search-help-title" });
-		
-		const list = helpContainer.createEl("ul", { cls: "bible-search-help-list" });
-		
-		const li1 = list.createEl("li");
-		li1.innerHTML = '<strong>"phrase"</strong>: Search exact phrase (e.g. <code>"eternal life"</code>)';
-		
-		const li2 = list.createEl("li");
-		li2.innerHTML = '<strong>-word</strong>: Exclude term (e.g. <code>light -darkness</code>)';
-		
-		const li3 = list.createEl("li");
-		li3.innerHTML = '<strong>nt / ot</strong>: Limit to New/Old Testament (e.g. <code>nt:faith</code>)';
-		
-		const li4 = list.createEl("li");
-		li4.innerHTML = '<strong>BOOK:word</strong>: Filter by book name/code (e.g. <code>ROM:grace</code>)';
-		
-		helpContainer.createEl("p", { text: "Type at least 2 characters to search scripture offline.", cls: "bible-search-help-footer" });
+		this.renderer.renderSearchHelpGuide(el);
 	}
 
 	async performFullTextSearch(query: string, searchResultsEl: HTMLElement) {
@@ -2364,7 +763,7 @@ export class BibleView extends ItemView {
 
 		searchResultsEl.createDiv({ cls: "no-results-message", text: "Searching local database..." });
 
-		const localData = await this.plugin.readLocalTranslation(this.settings.bibleVersion);
+		const localData = await this.plugin.cacheStore.readLocalTranslation(this.settings.bibleVersion);
 		if (!localData) {
 			searchResultsEl.empty();
 			const errCard = searchResultsEl.createDiv({ cls: "bible-search-error-card" });
@@ -2457,635 +856,6 @@ export class BibleView extends ItemView {
 				await this.navigateToPassage(res.bookName, res.chapter, parseInt(res.verse));
 			});
 		});
-	}
-	applySavedHighlights(container: HTMLElement, bookName: string, chapter: number) {
-		const data = this.settings.annotationsData || {};
-		this.logDebug(`applySavedHighlights called for ${bookName} ${chapter}. Keys count: ${Object.keys(data).length}`);
-		
-		for (const key in data) {
-			const annVal = data[key];
-			if (!annVal) continue;
-			const anns = Array.isArray(annVal) ? annVal : [annVal];
-			
-			anns.forEach(ann => {
-				if (!ann || !ann.color) return;
-				
-				const colonIdx = key.indexOf(":");
-				if (colonIdx === -1) return;
-				const ref = key.substring(0, colonIdx);
-				const spaceIdx = ref.lastIndexOf(" ");
-				if (spaceIdx === -1) return;
-				const book = ref.substring(0, spaceIdx);
-				const ch = parseInt(ref.substring(spaceIdx + 1));
-				
-				if (book !== bookName || ch !== chapter) return;
-				
-				const versePart = key.substring(colonIdx + 1);
-				let startVerse = 0;
-				let endVerse = 0;
-				if (versePart.includes("-")) {
-					const parts = versePart.split("-");
-					startVerse = parseInt(parts[0]);
-					endVerse = parseInt(parts[1]);
-				} else {
-					startVerse = parseInt(versePart);
-					endVerse = startVerse;
-				}
-				
-				for (let v = startVerse; v <= endVerse; v++) {
-					const rawVerseEls = Array.from(container.querySelectorAll(`[data-verse="${v}"]`)) as HTMLElement[];
-					// Filter out nested elements to prevent double-highlighting
-					const verseEls = rawVerseEls.filter(el => !rawVerseEls.some(other => other !== el && other.contains(el)));
-					for (const verseEl of verseEls) {
-						if (ann && ann.color) {
-							if (ann.verses && ann.verses[v.toString()]) {
-								const val = ann.verses[v.toString()];
-								const phrases = Array.isArray(val) ? val : [val];
-								phrases.forEach(phrase => {
-									this.logDebug(`Applying phrase highlight from map: "${phrase}" in color "${ann.color}" to verse ${v}`);
-									this.highlightPhraseInElement(verseEl, phrase, ann.color);
-								});
-							} else if (ann.text) {
-								this.logDebug(`Applying phrase highlight: "${ann.text}" in color "${ann.color}" to verse ${v}`);
-								this.highlightPhraseInElement(verseEl, ann.text, ann.color);
-							} else {
-								this.logDebug(`Applying full verse highlight in color "${ann.color}" to verse ${v}`);
-								verseEl.classList.add(`highlight-${ann.color}`);
-							}
-						}
-						if (ann.note) {
-							this.applyNoteIndicator(verseEl, bookName, chapter, versePart, ann.note);
-						} else {
-							const indicator = verseEl.querySelector(".bible-verse-note-indicator");
-							if (indicator) indicator.remove();
-						}
-					}
-				}
-			});
-		}
-	}
-
-	showHighlightToolbar(e: MouseEvent | DOMRect, verseEl: HTMLElement, bookName: string, chapter: number, verseNum: string) {
-		if (e instanceof MouseEvent) {
-			e.stopPropagation();
-		}
-		const existing = document.querySelector(".bible-highlight-toolbar");
-		if (existing) existing.remove();
-
-		const toolbar = document.createElement("div");
-		toolbar.className = "bible-highlight-toolbar";
-
-		const colors = ["yellow", "green", "blue", "pink"];
-		colors.forEach(color => {
-			const btn = toolbar.createEl("button", { cls: `color-dot bg-${color}` });
-			btn.addEventListener("click", async (ev) => {
-				ev.stopPropagation();
-				await this.applyHighlight(verseEl, bookName, chapter, verseNum, color);
-				toolbar.remove();
-			});
-		});
-
-		const clearBtn = toolbar.createEl("button", { cls: "clear-dot", text: "✖" });
-		clearBtn.addEventListener("click", async (ev) => {
-			ev.stopPropagation();
-			await this.applyHighlight(verseEl, bookName, chapter, verseNum, null);
-			toolbar.remove();
-		});
-
-		const noteBtn = toolbar.createEl("button", { cls: "note-dot", text: "📝" });
-		noteBtn.addEventListener("click", (ev) => {
-			ev.stopPropagation();
-			toolbar.remove();
-			this.showNotePrompt(verseEl, bookName, chapter, verseNum);
-		});
-
-		document.body.appendChild(toolbar);
-
-		const rect = e instanceof DOMRect ? e : verseEl.getBoundingClientRect();
-		toolbar.style.position = "fixed";
-		toolbar.style.top = `${rect.top - 40}px`;
-		toolbar.style.left = `${Math.max(10, rect.left + (rect.width - 150) / 2)}px`;
-		toolbar.style.zIndex = "1000";
-
-		const clickAway = (ev: MouseEvent) => {
-			if (!toolbar.contains(ev.target as Node)) {
-				toolbar.remove();
-				document.removeEventListener("mousedown", clickAway);
-			}
-		};
-		document.addEventListener("mousedown", clickAway);
-	}
-
-	showMultiVerseHighlightToolbar(rect: DOMRect, verseEls: HTMLElement[], range: Range, bookName: string, chapter: number) {
-		const existing = document.querySelector(".bible-highlight-toolbar");
-		if (existing) existing.remove();
-
-		const toolbar = document.createElement("div");
-		toolbar.className = "bible-highlight-toolbar";
-
-		verseEls.sort((a, b) => {
-			const vA = parseInt(a.getAttribute("data-verse") || "0");
-			const vB = parseInt(b.getAttribute("data-verse") || "0");
-			return vA - vB;
-		});
-
-		const startVerse = verseEls[0].getAttribute("data-verse");
-		const endVerse = verseEls[verseEls.length - 1].getAttribute("data-verse");
-		const verseRangeStr = startVerse === endVerse ? startVerse : `${startVerse}-${endVerse}`;
-
-		const colors = ["yellow", "green", "blue", "pink"];
-		colors.forEach(color => {
-			const btn = toolbar.createEl("button", { cls: `color-dot bg-${color}` });
-			btn.addEventListener("click", async (ev) => {
-				ev.stopPropagation();
-				const fullSelectedText = range.toString().trim();
-				
-				const versesMap: Record<string, string | string[]> = {};
-				for (const el of verseEls) {
-					const vNum = el.getAttribute("data-verse");
-					if (vNum) {
-						const phrase = this.getSelectedTextInElement(el, range);
-						if (phrase) {
-							const existingVal = versesMap[vNum];
-							if (existingVal) {
-								if (Array.isArray(existingVal)) {
-									existingVal.push(phrase);
-								} else {
-									versesMap[vNum] = [existingVal, phrase];
-								}
-							} else {
-								versesMap[vNum] = phrase;
-							}
-						}
-					}
-				}
-
-				if (fullSelectedText && verseRangeStr) {
-					await this.applyHighlight(verseEls, bookName, chapter, verseRangeStr, color, fullSelectedText, versesMap);
-				}
-				toolbar.remove();
-				document.getSelection()?.removeAllRanges();
-			});
-		});
-
-		const clearBtn = toolbar.createEl("button", { cls: "clear-dot", text: "✖" });
-		clearBtn.addEventListener("click", async (ev) => {
-			ev.stopPropagation();
-			if (verseRangeStr) {
-				await this.applyHighlight(verseEls, bookName, chapter, verseRangeStr, null);
-			}
-			toolbar.remove();
-			document.getSelection()?.removeAllRanges();
-		});
-
-		const noteBtn = toolbar.createEl("button", { cls: "note-dot", text: "📝" });
-		noteBtn.addEventListener("click", (ev) => {
-			ev.stopPropagation();
-			toolbar.remove();
-			if (verseRangeStr) {
-				this.showNotePrompt(verseEls, bookName, chapter, verseRangeStr);
-			}
-		});
-
-		document.body.appendChild(toolbar);
-
-		toolbar.style.position = "fixed";
-		toolbar.style.top = `${rect.top - 40}px`;
-		toolbar.style.left = `${Math.max(10, rect.left + (rect.width - 150) / 2)}px`;
-		toolbar.style.zIndex = "1000";
-
-		const clickAway = (ev: MouseEvent) => {
-			if (!toolbar.contains(ev.target as Node)) {
-				toolbar.remove();
-				document.removeEventListener("mousedown", clickAway);
-			}
-		};
-		document.addEventListener("mousedown", clickAway);
-	}
-
-	getSelectedTextInElement(element: HTMLElement, range: Range): string {
-		let selectedText = "";
-		const textNodes: Text[] = [];
-		const walk = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null);
-		let node;
-		while (node = walk.nextNode()) {
-			if (node.parentElement && (
-				node.parentElement.classList.contains("verse-num") || 
-				node.parentElement.classList.contains("bible-verse-copy-btn") ||
-				node.parentElement.classList.contains("bible-verse-highlight-btn")
-			)) {
-				continue;
-			}
-			textNodes.push(node as Text);
-		}
-		
-		for (const node of textNodes) {
-			if (range.intersectsNode(node)) {
-				let start = 0;
-				let end = node.length;
-				if (node === range.startContainer) {
-					start = range.startOffset;
-				}
-				if (node === range.endContainer) {
-					end = range.endOffset;
-				}
-				selectedText += node.data.substring(start, end);
-			}
-		}
-		return selectedText.trim();
-	}
-
-	highlightPhraseInElement(element: HTMLElement, phrase: string, color: string) {
-		if (!phrase || !phrase.trim()) return;
-		this.logDebug(`[highlightPhraseInElement] Starting phrase search. Verse: ${element.getAttribute("data-verse") || "unknown"}. Phrase: "${phrase}"`);
-		const textNodes: Text[] = [];
-		const walk = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null);
-		let node;
-		while (node = walk.nextNode()) {
-			if (node.parentElement && (
-				node.parentElement.classList.contains("verse-num") || 
-				node.parentElement.classList.contains("bible-verse-copy-btn") ||
-				node.parentElement.classList.contains("bible-verse-highlight-btn") ||
-				node.parentElement.closest(".bible-highlight-toolbar")
-			)) {
-				continue;
-			}
-			textNodes.push(node as Text);
-		}
-
-		const normalizedTexts = textNodes.map(n => n.data);
-		const fullText = normalizedTexts.join("");
-		
-		const normalizeWS = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
-		const normPhrase = normalizeWS(phrase);
-		const normFullText = normalizeWS(fullText);
-		
-		this.logDebug(`[highlightPhraseInElement] Text nodes count: ${textNodes.length}`);
-		this.logDebug(`[highlightPhraseInElement] Raw fullText: "${fullText}"`);
-		this.logDebug(`[highlightPhraseInElement] Normalized phrase: "${normPhrase}"`);
-		this.logDebug(`[highlightPhraseInElement] Normalized fullText: "${normFullText}"`);
-
-		const index = fullText.toLowerCase().indexOf(phrase.toLowerCase());
-		this.logDebug(`[highlightPhraseInElement] Exact match indexOf result: ${index}`);
-		
-		if (index === -1) {
-			const normIndex = normFullText.indexOf(normPhrase);
-			this.logDebug(`[highlightPhraseInElement] Normalized match indexOf result: ${normIndex}`);
-			if (normIndex !== -1) {
-				this.logDebug(`[highlightPhraseInElement] WARNING: Match exists in normalized form but failed in exact text check due to layout spacing/newlines difference.`);
-			} else {
-				this.logDebug(`[highlightPhraseInElement] ERROR: Phrase not found in verse text even after whitespace normalization.`);
-			}
-			return;
-		}
-		if (index === -1) return;
-
-		let charCount = 0;
-		let startNodeIndex = -1;
-		let startOffset = -1;
-		let endNodeIndex = -1;
-		let endOffset = -1;
-
-		const startChar = index;
-		const endChar = index + phrase.length;
-
-		for (let i = 0; i < textNodes.length; i++) {
-			const nodeLength = textNodes[i].length;
-			if (startNodeIndex === -1 && charCount + nodeLength > startChar) {
-				startNodeIndex = i;
-				startOffset = startChar - charCount;
-			}
-			if (endNodeIndex === -1 && charCount + nodeLength >= endChar) {
-				endNodeIndex = i;
-				endOffset = endChar - charCount;
-				break;
-			}
-			charCount += nodeLength;
-		}
-
-		if (startNodeIndex !== -1 && endNodeIndex !== -1) {
-			if (startNodeIndex === endNodeIndex) {
-				const node = textNodes[startNodeIndex];
-				const mid = node.splitText(startOffset);
-				mid.splitText(phrase.length);
-				const span = document.createElement("span");
-				span.className = `highlight-${color} highlight-phrase`;
-				mid.parentNode?.replaceChild(span, mid);
-				span.appendChild(mid);
-			} else {
-				const startNode = textNodes[startNodeIndex];
-				const startMid = startNode.splitText(startOffset);
-				const startSpan = document.createElement("span");
-				startSpan.className = `highlight-${color} highlight-phrase`;
-				startMid.parentNode?.replaceChild(startSpan, startMid);
-				startSpan.appendChild(startMid);
-
-				for (let i = startNodeIndex + 1; i < endNodeIndex; i++) {
-					const midNode = textNodes[i];
-					const midSpan = document.createElement("span");
-					midSpan.className = `highlight-${color} highlight-phrase`;
-					midNode.parentNode?.replaceChild(midSpan, midNode);
-					midSpan.appendChild(midNode);
-				}
-
-				const endNode = textNodes[endNodeIndex];
-				const endMid = endNode.splitText(endOffset);
-				const endSpan = document.createElement("span");
-				endSpan.className = `highlight-${color} highlight-phrase`;
-				endNode.parentNode?.replaceChild(endSpan, endNode);
-				endSpan.appendChild(endNode);
-			}
-			
-			// Remove any full-verse highlight classes from the element to prevent double-highlighting
-			element.classList.remove("highlight-yellow", "highlight-green", "highlight-blue", "highlight-pink");
-		}
-	}
-	applyNoteIndicator(verseEl: HTMLElement, bookName: string, chapter: number, verseNum: string, note: string) {
-		let indicator = verseEl.querySelector(".bible-verse-note-indicator") as HTMLElement;
-		if (!indicator) {
-			const verseNumEl = verseEl.querySelector(".verse-num");
-			if (!verseNumEl) {
-				// Don't prepend note indicators to secondary split poetry lines (lines without verse-num)
-				// to keep visual formatting clean and prevent duplicate note icons on a single verse
-				return;
-			}
-			indicator = document.createElement("span");
-			indicator.className = "bible-verse-note-indicator";
-			indicator.textContent = " 📝";
-			verseNumEl.parentNode?.insertBefore(indicator, verseNumEl.nextSibling);
-			indicator.addEventListener("click", (e) => {
-				e.stopPropagation();
-				this.showNotePrompt(verseEl, bookName, chapter, verseNum);
-			});
-		}
-		indicator.setAttribute("title", note);
-	}
-
-	async applyHighlight(verseElOrEls: HTMLElement | HTMLElement[], bookName: string, chapter: number, verseNumOrRange: string, color: string | null, selectedText?: string, versesMap?: Record<string, string | string[]>) {
-		const key = `${bookName} ${chapter}:${verseNumOrRange}`;
-		this.logDebug(`applyHighlight called: key="${key}", color="${color}", selectedText="${selectedText || ""}"`);
-		if (!this.settings.annotationsData) {
-			this.settings.annotationsData = {};
-		}
-
-		const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
-		if (!container) return;
-
-		// 1. Determine the set of verses affected by this operation
-		const targetVerses = new Set<number>();
-		if (verseNumOrRange.includes("-")) {
-			const [start, end] = verseNumOrRange.split("-").map(Number);
-			for (let v = start; v <= end; v++) targetVerses.add(v);
-		} else {
-			targetVerses.add(Number(verseNumOrRange));
-		}
-
-		// 2. Update the annotations settings data
-		this.settings.annotationsData = updateAnnotationsData(
-			this.settings.annotationsData,
-			bookName,
-			chapter,
-			verseNumOrRange,
-			color,
-			selectedText,
-			versesMap
-		);
-
-		// Save the settings first
-		await this.plugin.saveSettings();
-
-		// 3. Clear current highlights and note badges in DOM for all affected target verses
-		targetVerses.forEach(v => {
-			const rawEls = Array.from(container.querySelectorAll(`[data-verse="${v}"]`)) as HTMLElement[];
-			for (const el of rawEls) {
-				el.classList.remove("highlight-yellow", "highlight-green", "highlight-blue", "highlight-pink");
-				el.querySelectorAll(".highlight-phrase").forEach(span => {
-					const parent = span.parentNode;
-					if (parent) {
-						while (span.firstChild) {
-							parent.insertBefore(span.firstChild, span);
-						}
-						parent.removeChild(span);
-					}
-				});
-				const indicator = el.querySelector(".bible-verse-note-indicator");
-				if (indicator) indicator.remove();
-				el.normalize();
-			}
-		});
-
-		// 4. Repaint all highlights and notes for this chapter cleanly from settings!
-		this.applySavedHighlights(container, bookName, chapter);
-	}
-
-	showNotePrompt(verseElOrEls: HTMLElement | HTMLElement[], bookName: string, chapter: number, verseNum: string) {
-		const key = `${bookName} ${chapter}:${verseNum}`;
-		this.logDebug(`showNotePrompt called for key="${key}"`);
-		const annVal = this.settings.annotationsData?.[key];
-		const primaryAnn = annVal ? (Array.isArray(annVal) ? annVal[0] : annVal) : null;
-		const existing = primaryAnn?.note || "";
-
-		new NoteModal(this.app, `Study Note for ${key}`, existing, async (note) => {
-			this.logDebug(`NoteModal saved for key="${key}". Note content: "${note}"`);
-			if (!this.settings.annotationsData) {
-				this.settings.annotationsData = {};
-			}
-
-			// Update only the note field — preserve existing color and highlight data
-			const curAnn = this.settings.annotationsData[key];
-			if (!curAnn) {
-				// No existing annotation: create one with default yellow highlight
-				this.settings.annotationsData[key] = { color: "yellow", note };
-			} else if (Array.isArray(curAnn)) {
-				if (curAnn.length > 0) {
-					curAnn[0].note = note;
-				} else {
-					curAnn.push({ color: "yellow", note });
-				}
-			} else {
-				curAnn.note = note;
-			}
-
-			// Persist and redraw — same clean pattern as applyHighlight
-			await this.plugin.saveSettings();
-			const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
-			if (container) {
-				this.applySavedHighlights(container, bookName, chapter);
-			}
-		}).open();
-	}
-
-	toggleVerseSelection(verseEl: HTMLElement, verseNum: string) {
-		if (this.selectedVersesForAnnotation.has(verseNum)) {
-			this.selectedVersesForAnnotation.delete(verseNum);
-			verseEl.classList.remove("is-selected-for-annotation");
-		} else {
-			this.selectedVersesForAnnotation.add(verseNum);
-			verseEl.classList.add("is-selected-for-annotation");
-		}
-
-		this.updateMobileSelectionToolbar();
-	}
-
-	updateMobileSelectionToolbar() {
-		let toolbar = document.querySelector(".mobile-annotation-toolbar") as HTMLElement;
-		if (this.selectedVersesForAnnotation.size === 0) {
-			if (toolbar) toolbar.remove();
-			return;
-		}
-
-		if (!toolbar) {
-			toolbar = document.createElement("div");
-			toolbar.className = "mobile-annotation-toolbar";
-			document.body.appendChild(toolbar);
-		}
-
-		toolbar.empty();
-		
-		toolbar.createDiv({ cls: "mobile-annotation-toolbar-title", text: `${this.selectedVersesForAnnotation.size} selected` });
-
-		const colors = ["yellow", "green", "blue", "pink"];
-		colors.forEach(color => {
-			const btn = toolbar.createEl("button", { cls: `color-dot bg-${color}` });
-			btn.addEventListener("click", async (e) => {
-				e.stopPropagation();
-				await this.applyMobileHighlights(color);
-			});
-		});
-
-		const clearBtn = toolbar.createEl("button", { cls: "clear-dot", text: "✖" });
-		clearBtn.addEventListener("click", async (e) => {
-			e.stopPropagation();
-			await this.applyMobileHighlights(null);
-		});
-
-		const noteBtn = toolbar.createEl("button", { cls: "note-dot", text: "📝" });
-		noteBtn.addEventListener("click", (e) => {
-			e.stopPropagation();
-			this.showMobileNotePrompt();
-		});
-	}
-
-	async applyMobileHighlights(color: string | null) {
-		if (this.selectedVersesForAnnotation.size === 0 || !this.activeBook || !this.activeChapterNumber) return;
-
-		const sorted = Array.from(this.selectedVersesForAnnotation).map(Number).sort((a, b) => a - b);
-		const ranges: string[] = [];
-		let start = sorted[0];
-		let prev = sorted[0];
-
-		for (let i = 1; i < sorted.length; i++) {
-			if (sorted[i] === prev + 1) {
-				prev = sorted[i];
-			} else {
-				ranges.push(start === prev ? start.toString() : `${start}-${prev}`);
-				start = sorted[i];
-				prev = sorted[i];
-			}
-		}
-		ranges.push(start === prev ? start.toString() : `${start}-${prev}`);
-
-		const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
-		
-		for (const rangeStr of ranges) {
-			const els: HTMLElement[] = [];
-			if (rangeStr.includes("-")) {
-				const [s, e] = rangeStr.split("-").map(Number);
-				for (let v = s; v <= e; v++) {
-					const rawEls = Array.from(container.querySelectorAll(`[data-verse="${v}"]`)) as HTMLElement[];
-					els.push(...rawEls);
-				}
-			} else {
-				const rawEls = Array.from(container.querySelectorAll(`[data-verse="${rangeStr}"]`)) as HTMLElement[];
-				els.push(...rawEls);
-			}
-			
-			await this.applyHighlight(els, this.activeBook.name, this.activeChapterNumber, rangeStr, color);
-		}
-
-		this.clearSelectedVerses();
-	}
-
-	showMobileNotePrompt() {
-		if (this.selectedVersesForAnnotation.size === 0 || !this.activeBook || !this.activeChapterNumber) return;
-
-		const sorted = Array.from(this.selectedVersesForAnnotation).map(Number).sort((a, b) => a - b);
-		const first = sorted[0];
-		const last = sorted[sorted.length - 1];
-		const rangeStr = first === last ? first.toString() : `${first}-${last}`;
-
-		const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
-		const els: HTMLElement[] = [];
-		for (let v = first; v <= last; v++) {
-			const rawEls = Array.from(container.querySelectorAll(`[data-verse="${v}"]`)) as HTMLElement[];
-			els.push(...rawEls);
-		}
-
-		this.clearSelectedVerses();
-		this.showNotePrompt(els, this.activeBook.name, this.activeChapterNumber, rangeStr);
-	}
-
-	clearSelectedVerses() {
-		const container = this.containerEl.querySelector(".chapter-container") as HTMLElement;
-		if (container) {
-			container.querySelectorAll(".is-selected-for-annotation").forEach(el => {
-				el.classList.remove("is-selected-for-annotation");
-			});
-		}
-		this.selectedVersesForAnnotation.clear();
-		const toolbar = document.querySelector(".mobile-annotation-toolbar") as HTMLElement;
-		if (toolbar) toolbar.remove();
-	}
-}
-
-class NoteModal extends Modal {
-	onSubmit: (result: string) => void;
-	existingNote: string;
-	title: string;
-
-	constructor(app: App, title: string, existingNote: string, onSubmit: (result: string) => void) {
-		super(app);
-		this.title = title;
-		this.existingNote = existingNote;
-		this.onSubmit = onSubmit;
-	}
-
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.createEl("h3", { text: this.title });
-
-		let textValue = this.existingNote;
-		new Setting(contentEl)
-			.setName("Note Content")
-			.addTextArea((text) => {
-				text.setValue(this.existingNote);
-				text.onChange((value) => {
-					textValue = value;
-				});
-				text.inputEl.rows = 4;
-				text.inputEl.style.width = "100%";
-			});
-
-		new Setting(contentEl)
-			.addButton((btn) =>
-				btn
-					.setButtonText("Save")
-					.setCta()
-					.onClick(() => {
-						this.close();
-						this.onSubmit(textValue);
-					})
-			)
-			.addButton((btn) =>
-				btn
-					.setButtonText("Cancel")
-					.onClick(() => {
-						this.close();
-					})
-			);
-	}
-
-	onClose() {
 		const { contentEl } = this;
 		contentEl.empty();
 	}

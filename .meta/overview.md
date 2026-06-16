@@ -6,9 +6,9 @@ This document provides a high-level overview of the architectural design, direct
 
 ## 1. High-Level Architecture
 
-Bible Sidecar Plus is built as a standard Obsidian plugin extending the Obsidian API. It registers a workspace sidecar panel (`BibleView`) that displays Bible books, chapters, and verses in a split-screen view next to standard Obsidian notes.
+Bible Sidecar Plus is built as a standard Obsidian plugin extending the Obsidian API. It registers a workspace panel (`BibleView`) that displays Bible books, chapters, and verses in a split-screen view next to standard Obsidian notes.
 
-Key features (such as auto-expanding typed Bible references, syncing highlights and notes to a local vault Markdown file, and managing downloaded translation databases) are coordinated through the main plugin entry point and backed by pure utility functions.
+Key features (such as auto-expanding typed Bible references, syncing Annotations to a local vault Markdown file, and managing downloaded Bible Version databases) are coordinated through the main plugin entry point and backed by pure utility functions.
 
 ```mermaid
 graph TD
@@ -23,7 +23,7 @@ graph TD
     Settings --> Utils
     
     %% External and local resources
-    Utils <--> LocalCache[(Local translations/*.json Cache)]
+    Utils <--> LocalCache[(Local translations/*.json Offline Cache)]
     Utils <--> VaultMD[(Vault md Annotations Sync)]
     Utils <--> RemoteAPI[Remote APIs: Bolls / ESV / API.Bible]
     
@@ -45,7 +45,7 @@ graph TD
 - **Build/Bundling Tool**: ESBuild (`esbuild.config.mjs`) configured to generate the unified release files (`main.js` and `styles.css`).
 - **Testing Runner**: Custom lightweight testing script (`run-tests.ts`) run inside a bundled Node.js environment to isolate unit tests from Obsidian desktop app API dependencies.
 - **Remote APIs**:
-  - **Bolls.life**: Public API used to download standard translation text packages (e.g., KJV, YLT) for offline storage.
+  - **Bolls.life**: Public API used to download standard Bible Version text packages (e.g., KJV, YLT) for offline storage.
   - **Crossway ESV API**: Premium authenticated API for retrieving rich ESV HTML (including stanzas and red-letter text).
   - **API.Bible**: Premium authenticated API for multi-version scripture retrieval with advanced paragraph layouts.
 
@@ -65,10 +65,10 @@ bible-sidecar-plus/
 │   ├── constraints_and_rules.md # Rules for future development
 │   ├── instructions.md       # AI Agent Checklist
 │   └── design-philosophies.md# Legacy design statements
-├── translations/             # Git-ignored cache folder for offline JSON databases
-├── BibleView.ts              # Obsidian Pane View (UI, navigation, highlighting)
+├── translations/             # Git-ignored cache folder housing Offline Cache files
+├── BibleView.ts              # Obsidian Pane View (UI, navigation, annotations)
 ├── main.ts                   # Main Plugin Entry Point & Obsidian Command Bindings
-├── settings.ts               # Settings Panel UI & Offline Translation Manager
+├── settings.ts               # Settings Panel UI & Offline Bible Version Manager
 ├── utils.ts                  # Pure, platform-independent business logic utilities
 ├── styles.css                # Global and pane-specific layouts & animations
 ├── tsconfig.json             # TypeScript compilation settings
@@ -92,10 +92,10 @@ bible-sidecar-plus/
 ### 2. View Controller (`BibleView.ts`)
 - **Class**: `BibleView` (extends `ItemView`)
 - **Responsibilities**:
-  - Rendering the sidebar HTML, including tabs for Book browsing, Search query, and Settings.
+  - Rendering the Bible Sidecar HTML, including tabs for Book browsing, Search query, and Settings.
   - Book listing layout with collapsible testament accordions and quick filters.
   - Verses paragraph rendering, parallel text columns, and custom phrase-level text selection listener.
-  - Uniform DOM highlighting and note badge painting (`applySavedHighlights()`).
+  - Uniform DOM Annotations painting (`applySavedHighlights()`).
   - Active network connectivity probes (pinging `1.1.1.1` via HEAD requests) and setting inline offline states.
   - In-memory view scroll position memory cache (`savedScrollPositions`) to prevent page jumps during back-and-forth traversal.
 
@@ -105,7 +105,7 @@ bible-sidecar-plus/
   - Building the Obsidian Settings page UI.
   - API key connection status validators (connection tests with immediate visual success/error notices).
   - Collapsible option panels (Premium API dropdowns, Callout template customizers).
-  - Downloader buttons executing batch chapter fetches from online translation endpoints to write local database files.
+  - Downloader buttons executing batch chapter fetches from online Bible Version endpoints to write Offline Cache files.
 
 ### 4. Pure Business Logic (`utils.ts`)
 - **Responsibilities**:
@@ -113,4 +113,4 @@ bible-sidecar-plus/
   - RegEx compilers (`AUTO_EXPAND_REGEX`, `SELECTION_REGEX`).
   - Verse selection copy string compiler (`compileCopyMessage`).
   - Advanced search query parser (`parseAdvancedSearchQuery`) and matched text filtering.
-  - Array mapping helper updating offline JSON translation blocks (`updateLocalCacheData`).
+  - Array mapping helper updating Offline Cache JSON blocks (`updateLocalCacheData`).

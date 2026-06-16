@@ -12,6 +12,16 @@ export const CONTEXT_REGEX = /(?:^|\s)([1-3]?\s*[a-zA-Z\u00C0-\u024F\s]+?)\s*(\d
 export const AUTO_EXPAND_REGEX = /--([1-3]?\s*[a-zA-Z\u00C0-\u024F\s]+?)\s*(\d+):(\d+)(?:\s*-\s*(\d+:\d+|\d+))?(?:\s*\+([pqlhl]))?\s$/i;
 export const AUTO_EXPAND_VERSE_REGEX = /--v(\d+)(?:\s*-\s*(\d+))?(?:\s*\+([pqlhl]))?\s$/i;
 
+export function compileAutoExpandRegex(prefix: string): RegExp {
+	const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return new RegExp(`${escapedPrefix}([1-3]?\\s*[a-zA-Z\\u00C0-\\u024F\\s]+?)\\s*(\\d+):(\\d+)(?:\\s*-\\s*(\\d+:\\d+|\\d+))?(?:\\s*\\+([pqlhl]))?\\s$`, "i");
+}
+
+export function compileAutoExpandVerseRegex(prefix: string): RegExp {
+	const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return new RegExp(`${escapedPrefix}v(\\d+)(?:\\s*-\\s*(\\d+))?(?:\\s*\\+([pqlhl]))?\\s$`, "i");
+}
+
 export function convertToSuperscript(number: string | number): string {
 	const digits = String(number).split("");
 	return digits.map(d => superscriptMap[d] || d).join("");
@@ -37,6 +47,44 @@ export function formatAutoExpandText(text: string, style: string): string {
 	}
 }
 
+export function cleanHtmlKeepRedSpans(node: any): string {
+	if (!node) return "";
+	if (node.nodeType === 3) {
+		return node.textContent || "";
+	}
+	if (node.nodeType === 1) {
+		const tagName = (node.tagName || "").toLowerCase();
+		const styleAttr = node.getAttribute ? (node.getAttribute("style") || "") : "";
+		const classList = node.classList || [];
+		const isRedSpan = tagName === "span" && (
+			styleAttr.includes("color: red") ||
+			(typeof classList.contains === "function" && (
+				classList.contains("woc") ||
+				classList.contains("wj") ||
+				classList.contains("words-of-jesus")
+			))
+		);
+
+		let childrenText = "";
+		if (node.childNodes) {
+			for (let i = 0; i < node.childNodes.length; i++) {
+				childrenText += cleanHtmlKeepRedSpans(node.childNodes[i]);
+			}
+		}
+
+		if (isRedSpan) {
+			return `<span style="color: red;">${childrenText}</span>`;
+		}
+		
+		if (tagName === "br") {
+			return "\n";
+		}
+
+		return childrenText;
+	}
+	return "";
+}
+
 export function highlightGospelQuotes(text: string, bookName: string, enabled: boolean): string {
 	if (enabled && ["matthew", "mark", "luke", "john"].includes(bookName.toLowerCase())) {
 		return text
@@ -52,6 +100,82 @@ export interface CopySettings {
 	verseReferenceStyle: string;
 	verseReferenceFormat: string;
 	verseReferenceInternalLinking: boolean;
+}
+
+export function compileReferenceLink(
+	bookName: string,
+	chapter: number,
+	rangeStr: string,
+	verseVal: string,
+	internalLinking: boolean,
+	referenceFormat: string
+): string {
+	const uri = `obsidian://bible?book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${verseVal}`;
+	if (internalLinking) {
+		return `[[${bookName}]] [${chapter}:${rangeStr}](${uri})`;
+	} else {
+		const label = referenceFormat === "short"
+			? `${chapter}:${rangeStr}`
+			: `${bookName} ${chapter}:${rangeStr}`;
+		return `[${label}](${uri})`;
+	}
+}
+
+export function compileFormattedPassage(
+	scriptureText: string,
+	referenceLink: string,
+	settings: {
+		copyFormat?: string;
+		copyVerseReference?: boolean;
+		verseReferenceStyle?: string;
+	}
+): string {
+	let finalText = scriptureText;
+	const copyFormat = settings.copyFormat || "plain";
+	const copyVerseReference = settings.copyVerseReference !== false;
+	const verseReferenceStyle = settings.verseReferenceStyle || "> ";
+
+	if (copyFormat === "callout") {
+		finalText = `[!quote] ${referenceLink}\n${finalText}`;
+		finalText = finalText
+			.split("\n")
+			.map((line) => (line.trim() === "" ? ">" : `> ${line}`))
+			.join("\n");
+	} else {
+		if (copyVerseReference) {
+			finalText = `${finalText}\n${verseReferenceStyle}${referenceLink}`;
+		}
+	}
+	return finalText;
+}
+
+export function compileDragText(
+	dragPayload: string,
+	bookName: string,
+	chapter: number,
+	rangeStr: string,
+	verseNums: number[],
+	settings: {
+		copyFormat: string;
+		copyVerseReference: boolean;
+		verseReferenceStyle: string;
+		verseReferenceFormat: string;
+		verseReferenceInternalLinking: boolean;
+	}
+): string {
+	const allVersesStr = verseNums.join(",");
+	const referenceLink = compileReferenceLink(
+		bookName,
+		chapter,
+		rangeStr,
+		allVersesStr,
+		settings.verseReferenceInternalLinking,
+		settings.verseReferenceFormat
+	);
+
+	const cleanText = dragPayload.trim();
+
+	return compileFormattedPassage(cleanText, referenceLink, settings);
 }
 
 export function compileCopyMessage(
@@ -131,17 +255,14 @@ export function compileCopyMessage(
 
 		const rangeStr = run.start === run.end ? run.start.toString() : `${run.start}-${run.end}`;
 		const runVersesStr = run.verses.map((v) => v.verse).join(",");
-		const uri = `obsidian://bible?book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${runVersesStr}`;
-		
-		let referenceLink = "";
-		if (settings.verseReferenceInternalLinking) {
-			referenceLink = `[[${bookName}]] [${chapter}:${rangeStr}](${uri})`;
-		} else {
-			const label = settings.verseReferenceFormat === "short"
-				? `${chapter}:${rangeStr}`
-				: `${bookName} ${chapter}:${rangeStr}`;
-			referenceLink = `[${label}](${uri})`;
-		}
+		const referenceLink = compileReferenceLink(
+			bookName,
+			chapter,
+			rangeStr,
+			runVersesStr,
+			settings.verseReferenceInternalLinking,
+			settings.verseReferenceFormat
+		);
 
 		const referenceLine = `${settings.verseReferenceStyle}${referenceLink}`;
 
@@ -152,23 +273,16 @@ export function compileCopyMessage(
 
 	if (settings.copyFormat === "callout") {
 		const allVersesStr = verses.map((v) => v.verse).join(",");
-		const uri = `obsidian://bible?book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${allVersesStr}`;
-		
-		let referenceLink = "";
-		if (settings.verseReferenceInternalLinking) {
-			referenceLink = `[[${bookName}]] [${chapter}:${rangeStr}](${uri})`;
-		} else {
-			const label = settings.verseReferenceFormat === "short"
-				? `${chapter}:${rangeStr}`
-				: `${bookName} ${chapter}:${rangeStr}`;
-			referenceLink = `[${label}](${uri})`;
-		}
+		const referenceLink = compileReferenceLink(
+			bookName,
+			chapter,
+			rangeStr,
+			allVersesStr,
+			settings.verseReferenceInternalLinking,
+			settings.verseReferenceFormat
+		);
 
-		finalText = `[!quote] ${referenceLink}\n${finalText}`;
-		finalText = finalText
-			.split("\n")
-			.map((line) => (line.trim() === "" ? ">" : `> ${line}`))
-			.join("\n");
+		finalText = compileFormattedPassage(finalText, referenceLink, settings);
 	}
 
 	return { finalText: finalText.trim(), firstVerse, lastVerse, rangeStr };
@@ -209,7 +323,13 @@ export function compileAutoExpandOutput(
 	let lastChapter = startChapter;
 
 	for (const verse of versesArray) {
-		let cleanText = verse.text.replace(/<br\s*\/?>|<\/?i>|<\/?b>/gi, "\n").replace(/<[^>]*>?/gm, '');
+		let cleanText = verse.text
+			.replace(/<span style="color:\s*red;?">/gi, "__RED_START__")
+			.replace(/<\/span>/gi, "__RED_END__")
+			.replace(/<br\s*\/?>|<\/?i>|<\/?b>/gi, "\n")
+			.replace(/<[^>]*>?/gm, "")
+			.replace(/__RED_START__/g, '<span style="color: red;">')
+			.replace(/__RED_END__/g, '</span>');
 		
 		cleanText = highlightGospelQuotes(cleanText, bookName, settings.gospelQuotesRed);
 
@@ -590,149 +710,7 @@ export function searchBibleLocalData(
 	return results;
 }
 
-export function updateAnnotationsData(
-	annotationsData: Record<string, any>,
-	bookName: string,
-	chapter: number,
-	verseNumOrRange: string,
-	color: string | null,
-	selectedText?: string,
-	versesMap?: Record<string, string | string[]>
-): Record<string, any> {
-	const result = JSON.parse(JSON.stringify(annotationsData || {})); // Deep copy to prevent side effects
-	const key = `${bookName} ${chapter}:${verseNumOrRange}`;
-	
-	const targetVerses = new Set<number>();
-	if (verseNumOrRange.includes("-")) {
-		const [start, end] = verseNumOrRange.split("-").map(Number);
-		for (let v = start; v <= end; v++) targetVerses.add(v);
-	} else {
-		targetVerses.add(Number(verseNumOrRange));
-	}
 
-	if (!color) {
-		const keysToDelete: string[] = [];
-		for (const annKey of Object.keys(result)) {
-			const colonIdx = annKey.indexOf(":");
-			if (colonIdx === -1) continue;
-			const ref = annKey.substring(0, colonIdx);
-			const spaceIdx = ref.lastIndexOf(" ");
-			if (spaceIdx === -1) continue;
-			const bName = ref.substring(0, spaceIdx);
-			const chNum = parseInt(ref.substring(spaceIdx + 1));
-			
-			if (bName === bookName && chNum === chapter) {
-				const versePart = annKey.substring(colonIdx + 1);
-				let startVerse = 0;
-				let endVerse = 0;
-				if (versePart.includes("-")) {
-					const parts = versePart.split("-");
-					startVerse = parseInt(parts[0]);
-					endVerse = parseInt(parts[1]);
-				} else {
-					startVerse = parseInt(versePart);
-					endVerse = startVerse;
-				}
-				
-				let overlaps = false;
-				for (let v = startVerse; v <= endVerse; v++) {
-					if (targetVerses.has(v)) {
-						overlaps = true;
-						break;
-					}
-				}
-				if (overlaps) {
-					keysToDelete.push(annKey);
-				}
-			}
-		}
-		for (const k of keysToDelete) {
-			delete result[k];
-		}
-	} else {
-		const existing = result[key];
-		const existingNote = existing ? (Array.isArray(existing) ? existing[0]?.note : existing.note) : undefined;
-
-		if (selectedText) {
-			result[key] = { color, text: selectedText, verses: versesMap, note: existingNote };
-		} else {
-			if (existing && !Array.isArray(existing)) {
-				existing.color = color;
-			} else {
-				result[key] = { color, note: existingNote };
-			}
-		}
-	}
-	return result;
-}
-
-
-// ─────────────────────────────────────────────────────────────────────────────
-// NEW ROUND-2 UTILITIES
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Serializes the in-memory annotations JSON store into a grouped Markdown string
- * suitable for writing to the user's vault annotation file.
- *
- * Groups entries by Book, then lists each annotated verse with its highlight
- * color and optional study note. Includes an `obsidian://bible` deep-link for
- * quick navigation back to the passage.
- *
- * Pure function — no Obsidian imports, fully unit-testable.
- */
-export function serializeAnnotationsToMarkdown(
-	annotationsData: Record<string, any>
-): string {
-	if (!annotationsData || Object.keys(annotationsData).length === 0) {
-		return "# Bible Annotations\n\n_No highlights or notes yet._\n";
-	}
-
-	// Group keys by book name
-	const groups: Record<string, string[]> = {};
-	for (const key of Object.keys(annotationsData)) {
-		const colonIdx = key.indexOf(":");
-		if (colonIdx === -1) continue;
-		const ref = key.substring(0, colonIdx);
-		const spaceIdx = ref.lastIndexOf(" ");
-		if (spaceIdx === -1) continue;
-		const book = ref.substring(0, spaceIdx);
-		if (!groups[book]) groups[book] = [];
-		groups[book].push(key);
-	}
-
-	const lines: string[] = ["# Bible Annotations\n"];
-
-	for (const book of Object.keys(groups).sort()) {
-		lines.push(`## ${book}\n`);
-		for (const key of groups[book].sort()) {
-			const colonIdx = key.indexOf(":");
-			const ref = key.substring(0, colonIdx); // e.g. "John 3"
-			const versePart = key.substring(colonIdx + 1); // e.g. "16" or "16-17"
-			const spaceIdx = ref.lastIndexOf(" ");
-			const chapter = ref.substring(spaceIdx + 1);
-
-			const annVal = annotationsData[key];
-			const anns = Array.isArray(annVal) ? annVal : [annVal];
-
-			for (const ann of anns) {
-				if (!ann) continue;
-				const uri = `obsidian://bible?book=${encodeURIComponent(book)}&chapter=${chapter}&verse=${versePart}`;
-				const link = `[${book} ${chapter}:${versePart}](${uri})`;
-				const colorLabel = ann.color ? ` [${ann.color}]` : "";
-				const textLabel = ann.text ? ` — *"${ann.text}"*` : "";
-
-				lines.push(`### ${link}${colorLabel}${textLabel}`);
-				if (ann.note) {
-					lines.push(`> ${ann.note}`);
-				}
-				lines.push("");
-			}
-		}
-	}
-
-	return lines.join("\n");
-}
 
 /**
  * Extracts cross-reference footnote markers from ESV API / API.Bible HTML.
@@ -815,7 +793,7 @@ export function parseStrongsText(rawText: string, isNewTestament = false): Stron
 	const tokens: StrongsToken[] = [];
 	
 	// 1. Handle tag format: "statutes<S>2706</S>"
-	const tagRegex = /(\S+?)<S>(\d+)<\/S>/gi;
+	const tagRegex = /([^<>\s]+?)<S>(\d+)<\/S>/gi;
 	let m1: RegExpExecArray | null;
 	tagRegex.lastIndex = 0;
 	while ((m1 = tagRegex.exec(rawText)) !== null) {
@@ -824,7 +802,7 @@ export function parseStrongsText(rawText: string, isNewTestament = false): Stron
 	}
 
 	// 2. Handle bracket format: "God<H430>"
-	const bracketRegex = /(\S+?)<([HG]\d+)>/gi;
+	const bracketRegex = /([^<>\s]+?)<([HG]\d+)>/gi;
 	let m2: RegExpExecArray | null;
 	bracketRegex.lastIndex = 0;
 	while ((m2 = bracketRegex.exec(rawText)) !== null) {
@@ -848,14 +826,14 @@ export function renderStrongsHtml(rawText: string, isNewTestament = false): stri
 	const prefix = isNewTestament ? "G" : "H";
 
 	// 1. First, replace tags attached to a word: "statutes<S>2706</S>"
-	const tagRegex = /(\S+?)<S>(\d+)<\/S>/gi;
+	const tagRegex = /([^<>\s]+?)<S>(\d+)<\/S>/gi;
 	text = text.replace(tagRegex, (_, word, num) => {
 		const id = `${prefix}${num}`;
 		return `<span class="strongs-word" data-strongs="${id}" title="${id}">${word}</span>`;
 	});
 
 	// 2. Handle bracket format: "God<H430>"
-	const bracketRegex = /(\S+?)<([HG]\d+)>/gi;
+	const bracketRegex = /([^<>\s]+?)<([HG]\d+)>/gi;
 	text = text.replace(bracketRegex, (_, word, id) => {
 		const upperId = id.toUpperCase();
 		return `<span class="strongs-word" data-strongs="${upperId}" title="${upperId}">${word}</span>`;

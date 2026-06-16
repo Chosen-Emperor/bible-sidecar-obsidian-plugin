@@ -3,6 +3,8 @@ import {
     SELECTION_VERSE_REGEX,
     AUTO_EXPAND_REGEX,
     AUTO_EXPAND_VERSE_REGEX,
+    compileAutoExpandRegex,
+    compileAutoExpandVerseRegex,
     convertToSuperscript,
     convertToNumber,
     formatAutoExpandText,
@@ -17,14 +19,18 @@ import {
     parseProtocolParams,
     updateLocalCacheData,
     searchBibleLocalData,
-    updateAnnotationsData,
-    serializeAnnotationsToMarkdown,
     extractCrossReferences,
     parseStrongsText,
     renderStrongsHtml,
+    compileReferenceLink,
+    compileFormattedPassage,
+    compileDragText,
     highlightSearchTerms,
     parseAdvancedSearchQuery,
+    cleanHtmlKeepRedSpans,
+    highlightGospelQuotes,
 } from "./utils";
+import { OfflineCacheStore, FileAdapter } from "./OfflineCacheStore";
 
 // Colors for beautiful CLI output
 const colors = {
@@ -53,7 +59,7 @@ function assert(condition: boolean, message: string) {
     }
 }
 
-function runTestSuite() {
+async function runTestSuite() {
     // ----------------------------------------------------
     // TEST SECTION 1: SELECTION LINK CONVERSION REGEXES
     // ----------------------------------------------------
@@ -105,6 +111,30 @@ function runTestSuite() {
     assert(AUTO_EXPAND_VERSE_REGEX.test("--v16-18 "), "--v16-18 should match auto-expand verse regex");
     assert(AUTO_EXPAND_VERSE_REGEX.test("--V16 +p "), "--V16 +p should match auto-expand verse regex");
     assert(!AUTO_EXPAND_VERSE_REGEX.test("--v16"), "Missing trailing space should NOT match auto-expand verse regex");
+
+    // Custom trigger prefix tests (e.g. ".." or "//")
+    const dotRegex = compileAutoExpandRegex("..");
+    const slashRegex = compileAutoExpandRegex("//");
+    const dotVerseRegex = compileAutoExpandVerseRegex("..");
+    const slashVerseRegex = compileAutoExpandVerseRegex("//");
+
+    assert(dotRegex.test("..John 3:16 "), "..John 3:16 should match custom auto-expand regex with prefix '..'");
+    assert(slashRegex.test("//John 3:16 "), "//John 3:16 should match custom auto-expand regex with prefix '//'");
+    assert(dotVerseRegex.test("..v16 "), "..v16 should match custom auto-expand verse regex with prefix '..'");
+    assert(slashVerseRegex.test("//v16 "), "//v16 should match custom auto-expand verse regex with prefix '//'");
+
+    assert(!dotRegex.test("--John 3:16 "), "--John 3:16 should NOT match auto-expand regex with prefix '..'");
+    assert(!slashRegex.test("..John 3:16 "), "..John 3:16 should NOT match auto-expand regex with prefix '//'");
+
+    // Match extraction validation
+    const matchDot = "..John 3:16 +p ".match(dotRegex);
+    assert(matchDot !== null, "Custom auto match should not be null");
+    if (matchDot) {
+        assert(matchDot[1] === "John", "Custom prefix book should be John");
+        assert(matchDot[2] === "3", "Custom prefix chapter should be 3");
+        assert(matchDot[3] === "16", "Custom prefix verse should be 16");
+        assert(matchDot[5] === "p", "Custom prefix flag should be p");
+    }
 
     const matchAuto = "--John 3:16 +p ".match(AUTO_EXPAND_REGEX);
     assert(matchAuto !== null, "Auto match should not be null");
@@ -352,6 +382,34 @@ function runTestSuite() {
     // Test that if setting is disabled, Gospel does NOT get highlights
     const resGospelRedDisabled = compileAutoExpandOutput(gospelVerses, "Matthew", 26, "p", "[Matthew 26:26](...)", { ...mockSettingsGospelRed, gospelQuotesRed: false });
     assert(!resGospelRedDisabled.includes('<span style="color: red;">'), "Color Jesus's words: Disabled setting means NO red highlights in Gospels");
+
+    // Test that pre-existing red spans (e.g. from premium APIs) are preserved in compileAutoExpandOutput even when gospelQuotesRed is false
+    const premiumVerses = [
+        { verse: 26, text: "Now Jesus said, <span style=\"color: red;\">Take, eat; this is my body.</span>" }
+    ];
+    const resPremiumPreserved = compileAutoExpandOutput(premiumVerses, "Matthew", 26, "p", "[Matthew 26:26](...)", { ...mockSettingsGospelRed, gospelQuotesRed: false });
+    assert(resPremiumPreserved.includes('<span style="color: red;">Take, eat; this is my body.</span>'), "Premium pre-existing red spans are preserved in compileAutoExpandOutput");
+
+    // Test cleanHtmlKeepRedSpans
+    const mockNodeText = { nodeType: 3, textContent: "Hello world" };
+    const mockNodeSpanWoc = {
+        nodeType: 1,
+        tagName: "SPAN",
+        classList: { contains: (cls: string) => cls === "woc" },
+        childNodes: [{ nodeType: 3, textContent: "Jesus words" }]
+    };
+    const mockNodeDiv = {
+        nodeType: 1,
+        tagName: "DIV",
+        childNodes: [
+            mockNodeText,
+            mockNodeSpanWoc
+        ]
+    };
+
+    assert(cleanHtmlKeepRedSpans(mockNodeText) === "Hello world", "cleanHtmlKeepRedSpans parses text nodes correctly");
+    assert(cleanHtmlKeepRedSpans(mockNodeSpanWoc) === '<span style="color: red;">Jesus words</span>', "cleanHtmlKeepRedSpans preserves woc class span tags as style='color: red;'");
+    assert(cleanHtmlKeepRedSpans(mockNodeDiv) === 'Hello world<span style="color: red;">Jesus words</span>', "cleanHtmlKeepRedSpans recursively unwraps non-red-span elements");
 
     console.log();
 
@@ -627,105 +685,9 @@ function runTestSuite() {
     console.log();
 
     // ----------------------------------------------------
-    // TEST SECTION 14: HIGHLIGHT AND NOTES BEHAVIOR MATRIX
+    // TEST SECTION 14: CROSS-REFERENCE EXTRACTION
     // ----------------------------------------------------
-    console.log(`${colors.yellow}${colors.bold}[Test Section 14: Highlight and Notes Behavior Matrix]${colors.reset}`);
-
-    let testData: Record<string, any> = {};
-
-    // 1. Apply Highlight (Yellow) Single Verse
-    testData = updateAnnotationsData(testData, "John", 3, "16", "yellow");
-    assert(testData["John 3:16"] !== undefined, "Annotation for John 3:16 should be created");
-    assert(testData["John 3:16"].color === "yellow", "Highlight color should be yellow");
-    assert(testData["John 3:16"].note === undefined, "Note should be undefined initially");
-
-    // 2. Apply Highlight (Green) Multi-Verse
-    testData = updateAnnotationsData(testData, "Romans", 12, "1-2", "green");
-    assert(testData["Romans 12:1-2"] !== undefined, "Annotation for Romans 12:1-2 should be created");
-    assert(testData["Romans 12:1-2"].color === "green", "Multi-verse color should be green");
-
-    // 3. Apply Phrase Highlight Single Verse
-    testData = updateAnnotationsData(testData, "John", 3, "16", "yellow", "loved the world", { "16": "loved the world" });
-    assert(testData["John 3:16"].text === "loved the world", "Phrase text should be set on John 3:16");
-    assert(testData["John 3:16"].verses["16"] === "loved the world", "Verses map should contain phrase for verse 16");
-
-    // 4. Apply Phrase Highlight Multi-Verse
-    const versesMapRange = { "6": "Draw me", "7": "Tell me" };
-    testData = updateAnnotationsData(testData, "Song of Solomon", 2, "6-7", "pink", "Draw me Tell me", versesMapRange);
-    assert(testData["Song of Solomon 2:6-7"] !== undefined, "Multi-verse phrase highlight should be created");
-    assert(testData["Song of Solomon 2:6-7"].verses["6"] === "Draw me", "Verse 6 phrase should be correct");
-    assert(testData["Song of Solomon 2:6-7"].verses["7"] === "Tell me", "Verse 7 phrase should be correct");
-
-    // 5. Add Study Note Single Verse (without existing note)
-    // First clear John 3:16 to start clean
-    testData = updateAnnotationsData(testData, "John", 3, "16", null);
-    testData = updateAnnotationsData(testData, "John", 3, "16", "yellow", undefined, undefined);
-    testData["John 3:16"].note = "This is a single verse note"; // simulate NoteModal submit
-    assert(testData["John 3:16"].note === "This is a single verse note", "Single verse note should be saved");
-    assert(testData["John 3:16"].color === "yellow", "Single verse color should default/persist");
-
-    // 6. Add Study Note Multi-Verse (without existing note)
-    testData = updateAnnotationsData(testData, "Genesis", 1, "1-2", "yellow");
-    testData["Genesis 1:1-2"].note = "Beginning note";
-    assert(testData["Genesis 1:1-2"].note === "Beginning note", "Multi-verse note should be saved");
-
-    // 7. Add Study Note Single Verse with Phrase Highlight
-    testData = updateAnnotationsData(testData, "John", 3, "16", "pink", "loved the world", { "16": "loved the world" });
-    assert(testData["John 3:16"].note === "This is a single verse note", "Note should be preserved during phrase highlight changes");
-    assert(testData["John 3:16"].text === "loved the world", "Phrase text should still exist");
-
-    // 8. Add Study Note Multi-Verse with Phrase Highlight
-    testData = updateAnnotationsData(testData, "Song of Solomon", 2, "6-7", "pink", "Draw me Tell me", versesMapRange);
-    testData["Song of Solomon 2:6-7"].note = "Love poetry note";
-    assert(testData["Song of Solomon 2:6-7"].note === "Love poetry note", "Multi-verse phrase note saved");
-    assert(testData["Song of Solomon 2:6-7"].verses["6"] === "Draw me", "Verses map phrase preserved");
-
-    // 9. Clear Highlight Single/Multi-Verse (including overlapping clear checks)
-    // Clear Romans 12:1-2 (which clears Romans 12:1-2 green)
-    testData = updateAnnotationsData(testData, "Romans", 12, "1-2", null);
-    assert(testData["Romans 12:1-2"] === undefined, "Romans 12:1-2 should be deleted on clear");
-
-    // Test overlapping clear: clearing Romans 12:1 should delete Romans 12:1-2 key
-    // Re-apply Romans 12:1-2
-    testData = updateAnnotationsData(testData, "Romans", 12, "1-2", "green");
-    // Clear only Romans 12:1
-    testData = updateAnnotationsData(testData, "Romans", 12, "1", null);
-    assert(testData["Romans 12:1-2"] === undefined, "Overlapping clear should delete Romans 12:1-2 key");
-
-    console.log();
-
-    // ----------------------------------------------------
-    // TEST SECTION 15: ANNOTATIONS → MARKDOWN SERIALIZER
-    // ----------------------------------------------------
-    console.log(`${colors.yellow}${colors.bold}[Test Section 15: Annotations → Markdown Serializer]${colors.reset}`);
-
-    const emptyAnnotations: Record<string, any> = {};
-    const emptyMd = serializeAnnotationsToMarkdown(emptyAnnotations);
-    assert(emptyMd.includes("_No highlights or notes yet._"), "Empty annotations produce placeholder text");
-
-    const singleAnnotation = { "John 3:16": { color: "yellow", note: "Amazing grace" } };
-    const singleMd = serializeAnnotationsToMarkdown(singleAnnotation);
-    assert(singleMd.includes("## John"), "Single annotation groups under book heading");
-    assert(singleMd.includes("[yellow]"), "Color label appears in output");
-    assert(singleMd.includes("> Amazing grace"), "Note appears as blockquote");
-    assert(singleMd.includes("obsidian://bible"), "Deep link appears in output");
-
-    const multiAnnotation = {
-        "Romans 8:28": { color: "green" },
-        "John 3:16": { color: "yellow", note: "Grace note" },
-        "John 3:17": { color: "blue" }
-    };
-    const multiMd = serializeAnnotationsToMarkdown(multiAnnotation);
-    assert(multiMd.indexOf("## John") < multiMd.indexOf("## Romans"), "Books are sorted alphabetically (John before Romans)");
-    assert(multiMd.includes("## Romans"), "Romans group heading present");
-    assert((multiMd.match(/###/g) || []).length === 3, "Three verse headings rendered");
-
-    console.log();
-
-    // ----------------------------------------------------
-    // TEST SECTION 16: CROSS-REFERENCE EXTRACTION
-    // ----------------------------------------------------
-    console.log(`${colors.yellow}${colors.bold}[Test Section 16: Cross-Reference HTML Extraction]${colors.reset}`);
+    console.log(`${colors.yellow}${colors.bold}[Test Section 14: Cross-Reference HTML Extraction]${colors.reset}`);
 
     const esvHtmlNoCrossRef = "<p>For God so loved the world</p>";
     const noCrossRefs = extractCrossReferences(esvHtmlNoCrossRef);
@@ -752,9 +714,9 @@ function runTestSuite() {
     console.log();
 
     // ----------------------------------------------------
-    // TEST SECTION 17: STRONGS CONCORDANCE PARSERS
+    // TEST SECTION 15: STRONGS CONCORDANCE PARSERS
     // ----------------------------------------------------
-    console.log(`${colors.yellow}${colors.bold}[Test Section 17: Strong's Concordance Parsers]${colors.reset}`);
+    console.log(`${colors.yellow}${colors.bold}[Test Section 15: Strong's Concordance Parsers]${colors.reset}`);
 
     const kjvVerse = "In<H1961> the beginning<H7225> God<H430> created<H1254>";
     const tokens = parseStrongsText(kjvVerse);
@@ -780,12 +742,25 @@ function runTestSuite() {
     assert(rendered.includes("the heavens"), "Non-Strong's text preserved unchanged");
     assert(!rendered.includes("<H430>"), "Raw Strong's markers are removed from output");
 
+    // Test that renderStrongsHtml combined with gospelQuotesRed does not break when order is correct
+    const rawGospelStrongs = "Jesus<G2424> said, \"I<G1473> am<G1510> the way<G3598>.\"";
+    let processed = highlightGospelQuotes(rawGospelStrongs, "John", true);
+    processed = renderStrongsHtml(processed, true);
+    assert(processed.includes('class="strongs-word"'), "Strongs rendering works alongside gospelQuotesRed");
+    assert(processed.includes('style="color: red;"'), "Gospel quotes red works alongside Strong's concordance");
+    assert(!processed.includes('class="<span'), "HTML tag attributes are not corrupted by quotes red highlights");
+
+    // Test that quote regex on already rendered strongs HTML causes tag corruption (old behavior)
+    const corruptedText = renderStrongsHtml("Jesus<G2424> said, \"I<G1473> am<G1510> the way<G3598>.\"");
+    const corruptedResult = highlightGospelQuotes(corruptedText, "John", true);
+    assert(corruptedResult.includes('class="<span'), "CORRUPTION DETECTED: HTML tag attributes are corrupted by quotes red highlights if order is wrong");
+
     console.log();
 
     // ----------------------------------------------------
-    // TEST SECTION 18: SEARCH TERM HIGHLIGHTING
+    // TEST SECTION 16: SEARCH TERM HIGHLIGHTING
     // ----------------------------------------------------
-    console.log(`${colors.yellow}${colors.bold}[Test Section 18: Search Term Highlighting]${colors.reset}`);
+    console.log(`${colors.yellow}${colors.bold}[Test Section 16: Search Term Highlighting]${colors.reset}`);
 
     const parsed18 = parseAdvancedSearchQuery("eternal life");
     const highlightedBasic = highlightSearchTerms("For God so loved the world, that he gave his only Son", parsed18);
@@ -813,26 +788,152 @@ function runTestSuite() {
     const highlightedCase = highlightSearchTerms("For God so loved the world", parsedCase);
     assert(highlightedCase.includes('<mark class="search-match">God</mark>'), "Highlighting is case-insensitive (GOD matches God)");
 
+    // ----------------------------------------------------
+    // TEST SECTION 19: UNIFIED REFERENCE FORMATTING
+    // ----------------------------------------------------
+    console.log(`${colors.yellow}${colors.bold}[Test Section 19: Unified Reference Formatting]${colors.reset}`);
+    
+    // Test compileReferenceLink
+    const ref1 = compileReferenceLink("John", 3, "16", "16", true, "full");
+    assert(ref1 === "[[John]] [3:16](obsidian://bible?book=John&chapter=3&verse=16)", "Internal full link format matches");
+    
+    const ref2 = compileReferenceLink("Romans", 12, "1-2", "1,2", false, "short");
+    assert(ref2 === "[12:1-2](obsidian://bible?book=Romans&chapter=12&verse=1,2)", "External short link format matches");
+
+    // Test compileFormattedPassage
+    const passagePlain = compileFormattedPassage("In the beginning...", "[[Genesis]] [1:1](obsidian://...)", {
+        copyFormat: "plain",
+        copyVerseReference: true,
+        verseReferenceStyle: "> "
+    });
+    assert(passagePlain === "In the beginning...\n> [[Genesis]] [1:1](obsidian://...)", "Plain format with reference matches");
+
+    const passageCallout = compileFormattedPassage("In the beginning...", "[[Genesis]] [1:1](obsidian://...)", {
+        copyFormat: "callout",
+        copyVerseReference: true,
+        verseReferenceStyle: "> "
+    });
+    assert(passageCallout.startsWith("> [!quote] [[Genesis]] [1:1]"), "Callout format starts with blockquote header");
+    assert(passageCallout.includes("> In the beginning..."), "Callout format prefixes lines with blockquote marker");
+
+    // Test compileDragText
+    const rawSupText = convertToSuperscript("1");
+    const preLinkedText = `[${rawSupText}](obsidian://bible?book=Genesis&chapter=1&verse=1) In the beginning...`;
+    const dragText = compileDragText(preLinkedText, "Genesis", 1, "1", [1], {
+        copyFormat: "plain",
+        copyVerseReference: true,
+        verseReferenceStyle: "> ",
+        verseReferenceFormat: "full",
+        verseReferenceInternalLinking: true
+    });
+    assert(dragText.includes("[¹](obsidian://bible?book=Genesis&chapter=1&verse=1)"), "Drag text compiles scripture with superscript linked verse");
+    assert(dragText.includes("> [[Genesis]] [1:1]("), "Drag text appends reference link at the bottom");
+
+    // ----------------------------------------------------
+    // TEST SECTION 20: OFFLINE CACHE STORE MEMORY CACHING
+    // ----------------------------------------------------
+    console.log(`${colors.yellow}${colors.bold}[Test Section 20: Offline Cache Store Memory Caching]${colors.reset}`);
+
+    const mockAdapter = new MockFileAdapter();
+    const store = new OfflineCacheStore(mockAdapter, "mock-dir");
+
+    // Seed mock files
+    const kData = { version: "KJV", passages: {} };
+    const eData = { version: "ESV", passages: {} };
+    const nData = { version: "NIV", passages: {} };
+
+    await store.writeLocalTranslation("KJV", kData);
+    await store.writeLocalTranslation("ESV", eData);
+
+    const kjvPath = "mock-dir/translations/KJV.json";
+    
+    // Clear counts
+    mockAdapter.readCount = {};
+
+    // 1. Read KJV first time (hit memory cache since we just wrote it)
+    const r1 = await store.readLocalTranslation("KJV");
+    assert(r1.version === "KJV", "Read translation returned correct version");
+    assert((mockAdapter.readCount[kjvPath] || 0) === 0, "First read after write did not hit disk (hit memory cache)");
+
+    // Clear cache to force disk read
+    store.clearCache();
+    mockAdapter.readCount = {};
+
+    // First read after clearing cache should hit disk
+    const r2 = await store.readLocalTranslation("KJV");
+    assert(r2.version === "KJV", "Read after clear cache returned correct version");
+    assert((mockAdapter.readCount[kjvPath] || 0) === 1, "First read hit disk once");
+
+    // Second read should hit memory cache (zero readCount increment)
+    const r3 = await store.readLocalTranslation("KJV");
+    assert(r3.version === "KJV", "Second read returned correct version");
+    assert((mockAdapter.readCount[kjvPath] || 0) === 1, "Second read hit memory cache, no additional disk read");
+
+    // 2. Cache eviction check: limit is 2
+    await store.writeLocalTranslation("NIV", nData); // cache now has KJV, NIV
+    mockAdapter.readCount = {};
+    
+    const esvPath = "mock-dir/translations/ESV.json";
+    const rEsv = await store.readLocalTranslation("ESV"); // triggers disk read for ESV. Cache now has ESV, NIV (evicted KJV)
+    assert((mockAdapter.readCount[esvPath] || 0) === 1, "ESV read hit disk");
+
+    // Read KJV again. It was evicted, so it must hit disk!
+    mockAdapter.readCount = {};
+    const rKjvAgain = await store.readLocalTranslation("KJV");
+    assert((mockAdapter.readCount[kjvPath] || 0) === 1, "KJV was evicted from memory cache and read from disk again");
+
     console.log();
 }
 
-// Execute tests
-try {
-    runTestSuite();
-    
-    console.log(`${colors.cyan}${colors.bold}====================================================${colors.reset}`);
-    console.log(`TEST SUMMARY:`);
-    console.log(`  Passed: ${colors.green}${passed}${colors.reset}`);
-    console.log(`  Failed: ${colors.red}${failed}${colors.reset}`);
-    console.log(`${colors.cyan}${colors.bold}====================================================${colors.reset}\n`);
+class MockFileAdapter implements FileAdapter {
+    files: Record<string, string> = {};
+    readCount: Record<string, number> = {};
 
-    if (failed > 0) {
-        process.exit(1);
-    } else {
-        console.log(`${colors.green}${colors.bold}🎉 ALL TESTS COMPLETED SUCCESSFULLY! 🎉${colors.reset}\n`);
-        process.exit(0);
+    async exists(path: string): Promise<boolean> {
+        return this.files[path] !== undefined;
     }
-} catch (err) {
-    console.error(`\n${colors.red}Error executing test suite:${colors.reset}`, err);
-    process.exit(1);
+
+    async read(path: string): Promise<string> {
+        this.readCount[path] = (this.readCount[path] || 0) + 1;
+        if (this.files[path] === undefined) {
+            throw new Error(`File not found: ${path}`);
+        }
+        return this.files[path];
+    }
+
+    async write(path: string, content: string): Promise<void> {
+        this.files[path] = content;
+    }
+
+    async mkdir(path: string): Promise<void> {}
+    async remove(path: string): Promise<void> {
+        delete this.files[path];
+    }
+
+    async list(path: string): Promise<{ files: string[] }> {
+        return { files: Object.keys(this.files) };
+    }
 }
+
+// Execute tests
+(async () => {
+    try {
+        await runTestSuite();
+        
+        console.log(`${colors.cyan}${colors.bold}====================================================${colors.reset}`);
+        console.log(`TEST SUMMARY:`);
+        console.log(`  Passed: ${colors.green}${passed}${colors.reset}`);
+        console.log(`  Failed: ${colors.red}${failed}${colors.reset}`);
+        console.log(`${colors.cyan}${colors.bold}====================================================${colors.reset}\n`);
+
+        if (failed > 0) {
+            process.exit(1);
+        } else {
+            console.log(`${colors.green}${colors.bold}🎉 ALL TESTS COMPLETED SUCCESSFULLY! 🎉${colors.reset}\n`);
+            process.exit(0);
+        }
+    } catch (err) {
+        console.error(`\n${colors.red}Error executing test suite:${colors.reset}`, err);
+        process.exit(1);
+    }
+})();

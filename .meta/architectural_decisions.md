@@ -115,7 +115,7 @@ Introduce `safeSetIcon()` inside `BibleView.ts`. If `Platform.isMobile` is activ
 ## ADR-007: Parallel View Responsive Collapse Threshold
 
 ### Status
-Proposed (Pending User Confirmation)
+Accepted
 
 ### Context
 The Bible sidecar panel can be resized to very narrow widths (< 300px) where a two-column parallel translation layout becomes unreadable. The feature must degrade gracefully without breaking the existing single-column view.
@@ -149,18 +149,17 @@ Restrict the Strong's Concordance feature to versions fetched from the Bolls.lif
 ## ADR-009: Verse-Anchored Scroll Synchronization for Parallel View
 
 ### Status
-Proposed (Pending User Confirmation)
+Accepted
 
 ### Context
 Two scroll sync strategies were considered for the parallel translation view: (1) percentage-based (scroll % of A → same % in B) and (2) verse-anchored (find topmost visible `[data-verse]` in A → scroll B to same verse number). Percentage-based is simpler but fails when chapters have uneven verse-text distributions (e.g., Psalms with long and short verses side by side).
 
 ### Decision
-Use verse-anchored synchronization via an `IntersectionObserver` mounted on all `[data-verse]` elements in column A. When the topmost visible verse changes, the observer callback scrolls column B to the matching `[data-verse]` element.
+Use verse-anchored scroll synchronization on-demand during tab-switching in the narrow layout. When the user switches tabs, scan the visible elements to locate the topmost visible verse of the current column, toggle translation visibility, and scroll/offset the newly activated column to align the matching verse at the top of the container.
 
 ### Consequences
-- Scroll sync is precise and verse-accurate regardless of text length differences.
-- `IntersectionObserver` is well-supported in Electron (desktop) and WebKit (mobile).
-- Slightly higher initial setup cost than percentage scrolling, but eliminates drift over long chapters.
+- Tab-switching transitions preserve precise verse alignment without scroll drift.
+- Scans viewport bounding rectangles on-demand on click, avoiding high-frequency scroll listeners or IntersectionObserver runtime CPU overhead.
 
 ---
 

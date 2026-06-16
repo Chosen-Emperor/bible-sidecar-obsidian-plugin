@@ -1,6 +1,6 @@
 # 📖 Bible Sidecar Plus for Obsidian
 
-A premium, feature-rich Bible reader and integration panel for Obsidian. This is an enhanced fork of the original [Bible Sidecar](https://github.com/janisringli/bible-sidecar-obsidian-plugin) plugin by Janis Ringli, developed to support offline databases, full-text offline search, and touch-friendly mobile layouts. Refined with the assistance of advanced AI.
+A premium, feature-rich Bible reader and integration panel for Obsidian. This is an enhanced fork of the original [Bible Sidecar](https://github.com/janisringli/bible-sidecar-obsidian-plugin) plugin by Janis Ringli, developed to support Offline Cache databases, full-text offline search, and touch-friendly mobile layouts. Refined with the assistance of advanced AI.
 
 Designed to feel responsive, fast, and native across both Desktop and Mobile (iPad/iOS/Android).
 
@@ -8,27 +8,27 @@ Designed to feel responsive, fast, and native across both Desktop and Mobile (iP
 
 ## ✨ Features
 
-- **⚡ Split-Screen Sidebar**: Keep your preferred scripture translations open side-by-side with your active notes.
-- **🔍 Fast Offline Search**: Search the entire Bible offline using any word or phrase (requires downloaded translations).
-- **📝 Auto-Expand Reference Shortcuts**: Type reference patterns like `--John 3:16` or `--John 3:16 +p` to automatically fetch and expand the full verse content directly into your editor.
+- **⚡ Split-Screen Bible Sidecar**: Keep your preferred Bible Versions open side-by-side with your active notes.
+- **🔍 Fast Offline Search**: Search the entire Bible offline using any word or phrase (requires downloaded Bible Versions).
+- **📝 Auto-Expand Reference Shortcuts**: Type reference patterns like `--John 3:16` or `--John 3:16 +p` to automatically fetch and expand the full Scripture Passage content directly into your editor.
 - **📋 Premium Formatting & Copy Styles**:
-  - Copy verses as plain text or nested Obsidian Callouts.
+  - Copy Scripture Passages as plain text or nested Obsidian Callouts.
   - Customize prefixes (e.g., list bullets `-`, callouts `>`, tildes `~`).
-  - Toggle automatic Wiki-linking (`[[John]]`) for verse references.
-- **🔴 Words of Christ in Red**: Turn on Gospel red-letter formatting for words spoken by Jesus (works for translations with quotation marks, e.g., ESV, NIV, NLT, NASB).
-- **🌐 Offline Downloader**: Download free translations (via Bolls.life) for full offline search and reading.
+  - Toggle automatic Wiki-linking (`[[John]]`) for Scripture Passage references.
+- **🔴 Words of Christ in Red**: Turn on Gospel red-letter formatting for words spoken by Jesus (works for Bible Versions with quotation marks, e.g., ESV, NIV, NLT, NASB).
+- **🌐 Offline Downloader**: Download free Bible Versions (via Bolls.life) for full offline search and reading.
 - **🔌 Premium API Integration**: Supports connection to **Crossway's ESV API** and **API.Bible** for premium layouts (poetry, paragraphs, etc.).
 
 ---
 
 ## 🚀 How to Use
 
-1. **Open the Sidecar Panel**: Click the **Bible Icon** in the ribbon sidebar or use the Command Palette (`Open Bible Sidecar`).
+1. **Open the Bible Sidecar**: Click the **Bible Icon** in the ribbon bar or use the Command Palette (`Open Bible Sidecar`).
 2. **Browse Scripture**: Select a book, choose a chapter, and browse verses.
-3. **Copy Verses**:
+3. **Copy Scripture**:
    - Tap/click any verse's copy icon to save it with your custom formatting rules.
-   - Select text directly in the sidebar, copy normally (`Ctrl+C` / `Cmd+C`), and it will copy with the formatted verse reference appended automatically.
-4. **Drag & Drop**: Drag a verse card from the sidecar directly into any active note to drop the formatted scripture right there.
+   - Select text directly in the Bible Sidecar, copy normally (`Ctrl+C` / `Cmd+C`), and it will copy with the formatted Scripture Passage reference appended automatically.
+4. **Drag & Drop**: Drag a verse container from the Bible Sidecar directly into any active note to drop the formatted scripture right there.
 5. **Use Auto-Expand**:
    - Enable auto-expand in settings.
    - Type `--John 3:16 ` (ends with space) to output a clean markdown link.
@@ -40,7 +40,7 @@ Designed to feel responsive, fast, and native across both Desktop and Mobile (iP
 
 | Setting | Description |
 | :--- | :--- |
-| **Bible Language & Version** | Select your language and download translations for offline use. |
+| **Bible Language & Version** | Select your language and download Bible Versions for offline use. |
 | **Copy Format** | Toggle between copying as **Plain text** or wrapping scripture in a markdown **Callout**. |
 | **Reference Prefix & Style** | Define how references are formatted (e.g., full book names or short abbreviations). |
 | **Auto-Expand Shortcuts** | Setup custom formatting, callout styles, and colors for `+p`, `+l`, and `+q` expand tags. |

@@ -22,7 +22,7 @@ To maintain codebase health, lightweight size, and cross-platform compatibility,
 
 ## 3. DOM & State Management Rules
 
-- **Unified Repaint Rule**: Do not paint highlight colors or inject study note icons directly into the DOM from interactive event listeners. All highlights and note indicators *must* be painted via the centralized `applySavedHighlights()` function inside `BibleView.ts` to ensure consistency.
+- **Unified Repaint Rule**: Do not paint Annotations (highlight colors or study note icons) directly into the DOM from interactive event listeners. All Annotations *must* be painted via the centralized `applySavedHighlights()` function inside `BibleView.ts` to ensure consistency.
 - **Debounced Save Rule**: Avoid calling Obsidian's `saveData()` directly. Always trigger configuration updates via `saveSettings()`, which implements a 400ms debounce timer to prevent write thrashing.
 - **Mobile Icon Safety**: Never call `setIcon()` directly on elements without wrapping it in `safeSetIcon()`. Mobile environments (WebKit container) have a known bug where SVG icons fail to render; `safeSetIcon()` provides Unicode emoji fallbacks to guarantee UI visibility.
 

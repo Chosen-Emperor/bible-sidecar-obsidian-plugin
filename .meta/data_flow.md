@@ -24,7 +24,7 @@ sequenceDiagram
     Main->>Obs: registerEvent("editor-change")
     Obs->>View: onOpen()
     View->>Main: readLocalTranslation(defaultVersion)
-    Main-->>View: local database JSON (if available)
+    Main-->>View: Offline Cache JSON (if available)
     View->>View: loadBible() -> renderBooks()
 ```
 
@@ -51,7 +51,7 @@ User Actions / Protocol URI Link
              ▼
  BibleView.ts: getChapterContent()
              │
-             ├──► 1. Check local translation cache JSON database
+             ├──► 1. Check local Offline Cache
              ├──► 2. [Online Fallback]: Fetch from ESV API, API.Bible, or Bolls.life
              ├──► 3. [Auto-Cache]: Save fetched chapter back to local cache
              ▼
@@ -133,7 +133,7 @@ User Types "--John 3:16 +p " in Editor
              ▼
  main.ts: fetchAndReplaceBibleText()
              │
-             ├──► 1. Read locally cached JSON database for active version
+             ├──► 1. Read local Offline Cache for active Bible Version
              ├──► 2. [Fallback]: Request online endpoint (ESV API -> API.Bible -> Bolls.life)
              ├──► 3. [Parse HTML]: Extract verse text spans, stripping styling divs
              ▼
@@ -152,7 +152,7 @@ User Types "--John 3:16 +p " in Editor
 
 ## 5. Advanced Query Search Flow
 
-When using the Search tab in the sidebar view:
+When using the Search tab in the Bible Sidecar view:
 
 ```text
 User Types advanced query: '"eternal life" -condemn ot:psalm'
@@ -167,7 +167,7 @@ User Types advanced query: '"eternal life" -condemn ot:psalm'
              ▼
  utils.ts: searchBibleLocalData()
              │
-             ├──► Read active local translation cache JSON database
+             ├──► Read active local Offline Cache
              ├──► Loop books -> chapters -> verses
              │      │
              │      ├──► Match filters (Exclusions, Testament, Book Prefix)
@@ -180,9 +180,9 @@ User Types advanced query: '"eternal life" -condemn ot:psalm'
 
 ---
 
-## 6. Offline Translation Downloader Flow
+## 6. Offline Bible Version Downloader Flow
 
-How translations are downloaded and stored for complete offline functionality:
+How Bible Versions are downloaded and stored for complete offline functionality:
 
 1. **Downloader Trigger**: In settings, clicking `Download [Version]` initiates `downloadTranslation(version)`.
 2. **Book Map Retrieval**: Requests `get-books/[Version]` from Bolls.life (or API.Bible books list).
