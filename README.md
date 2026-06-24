@@ -3,6 +3,7 @@
 A premium, feature-rich Bible reader and integration panel for Obsidian. This is an enhanced fork of the original [Bible Sidecar](https://github.com/janisringli/bible-sidecar-obsidian-plugin) plugin by Janis Ringli, developed to support Offline Cache databases, full-text offline search, and touch-friendly mobile layouts. Refined with the assistance of advanced AI.
 
 Designed to feel responsive, fast, and native across both Desktop and Mobile (iPad/iOS/Android).
+<img width="1492" height="968" alt="image" src="https://github.com/user-attachments/assets/78d8b443-149e-4a3d-84b7-22d898ca8478" />
 
 ---
 
