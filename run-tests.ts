@@ -1,3 +1,4 @@
+
 import {
     SELECTION_REGEX,
     SELECTION_VERSE_REGEX,
@@ -25,12 +26,16 @@ import {
     compileReferenceLink,
     compileFormattedPassage,
     compileDragText,
+    formatScripturePassage,
     highlightSearchTerms,
     parseAdvancedSearchQuery,
     cleanHtmlKeepRedSpans,
     highlightGospelQuotes,
+    stripLeadingVerseNumbers,
+    parseHtmlToVerses
 } from "./utils";
 import { OfflineCacheStore, FileAdapter } from "./OfflineCacheStore";
+import { BibleEditorSuggest } from "./BibleEditorSuggest";
 
 // Colors for beautiful CLI output
 const colors = {
@@ -800,6 +805,10 @@ async function runTestSuite() {
     const ref2 = compileReferenceLink("Romans", 12, "1-2", "1,2", false, "short");
     assert(ref2 === "[12:1-2](obsidian://bible?book=Romans&chapter=12&verse=1,2)", "External short link format matches");
 
+    // Test compileReferenceLink with empty rangeStr (whole book/chapter link) - no colon should be left
+    const refEmptyRange = compileReferenceLink("Job", 1, "", "1-22", false, "full");
+    assert(refEmptyRange === "[Job 1](obsidian://bible?book=Job&chapter=1&verse=1-22)", "Omit colon when range is empty");
+
     // Test compileFormattedPassage
     const passagePlain = compileFormattedPassage("In the beginning...", "[[Genesis]] [1:1](obsidian://...)", {
         copyFormat: "plain",
@@ -828,6 +837,23 @@ async function runTestSuite() {
     });
     assert(dragText.includes("[¹](obsidian://bible?book=Genesis&chapter=1&verse=1)"), "Drag text compiles scripture with superscript linked verse");
     assert(dragText.includes("> [[Genesis]] [1:1]("), "Drag text appends reference link at the bottom");
+
+    // Test formatScripturePassage
+    const testVerses = [
+        { verse: 16, text: "Jesus said, “For God so loved the world.”" }
+    ];
+    const testSettings = {
+        copyFormat: "plain",
+        copyVerseReference: true,
+        verseReferenceStyle: "> ",
+        verseReferenceFormat: "full",
+        verseReferenceInternalLinking: true,
+        gospelQuotesRed: true
+    };
+    const formattedPassage = formatScripturePassage("John", 3, testVerses, testSettings);
+    assert(formattedPassage.includes("[¹⁶](obsidian://bible?book=John&chapter=3&verse=16)"), "formatScripturePassage adds superscript link");
+    assert(formattedPassage.includes("color: red"), "formatScripturePassage highlights gospel quotes in red when setting enabled");
+    assert(formattedPassage.includes("> [[John]] [3:16]("), "formatScripturePassage appends reference link at the bottom");
 
     // ----------------------------------------------------
     // TEST SECTION 20: OFFLINE CACHE STORE MEMORY CACHING
@@ -881,6 +907,134 @@ async function runTestSuite() {
     mockAdapter.readCount = {};
     const rKjvAgain = await store.readLocalTranslation("KJV");
     assert((mockAdapter.readCount[kjvPath] || 0) === 1, "KJV was evicted from memory cache and read from disk again");
+
+    // ----------------------------------------------------
+    // TEST SECTION 21: DIALOGUE FORMATTING & SELECTION HELPERS
+    // ----------------------------------------------------
+    console.log(`${colors.yellow}${colors.bold}[Test Section 21: Dialogue Formatting & Selection Helpers]${colors.reset}`);
+
+    // Test: stripLeadingVerseNumbers
+    assert(stripLeadingVerseNumbers("¹⁶ For God so loved") === "For God so loved", "stripLeadingVerseNumbers strips simple leading superscript");
+    assert(stripLeadingVerseNumbers('<span style="color: red;">¹⁶ For God so loved</span>') === '<span style="color: red;">For God so loved</span>', "stripLeadingVerseNumbers strips superscript inside HTML tags");
+
+    // Test: parseHtmlToVerses (using the Node fallback)
+    const mockDialogueHtml = `<p><b class="verse-num">1 </b>“Truly, truly, I say to you,</p><p>whoever believes has eternal life.”</p><b class="verse-num">2 </b>I am the bread of life.`;
+    const parsedDialogue = parseHtmlToVerses(mockDialogueHtml, true, false);
+    assert(parsedDialogue.length === 2, "Parsed dialogue returns correct number of verses");
+    assert(parsedDialogue[0].verse === 1, "First verse number parsed correctly");
+    assert(parsedDialogue[0].text === "“Truly, truly, I say to you, whoever believes has eternal life.”", "First verse contains text from both paragraphs without running together");
+    assert(parsedDialogue[1].verse === 2 && parsedDialogue[1].text === "I am the bread of life.", "Second verse parsed correctly");
+
+    // Test: Nested element filtering
+    const mockParent = { parentElement: null } as any;
+    const mockChild = { parentElement: mockParent } as any;
+    const mockGrandchild = { parentElement: mockChild } as any;
+    const mockUnrelated = { parentElement: null } as any;
+
+    const nestedList = [mockParent, mockChild, mockGrandchild, mockUnrelated];
+    const filteredList = nestedList.filter(el => {
+        let parent = el.parentElement;
+        while (parent) {
+            if (nestedList.includes(parent)) {
+                return false;
+            }
+            parent = parent.parentElement;
+        }
+        return true;
+    });
+
+    assert(filteredList.length === 2, "Filtered list has exactly 2 elements");
+    assert(filteredList.includes(mockParent), "Parent element is kept");
+    assert(filteredList.includes(mockUnrelated), "Unrelated element is kept");
+    assert(!filteredList.includes(mockChild), "Child element is filtered out");
+    assert(!filteredList.includes(mockGrandchild), "Grandchild element is filtered out");
+
+    // ----------------------------------------------------
+    // TEST SECTION 22: BIBLE EDITOR SUGGEST (INTELLISENSE)
+    // ----------------------------------------------------
+    console.log(`${colors.yellow}${colors.bold}[Test Section 22: Bible Editor Suggest (IntelliSense)]${colors.reset}`);
+
+    // Mock app & plugin
+    const suggestMockApp = {
+        workspace: {
+            getLeavesOfType: (type: string) => {
+                return [{
+                    view: {
+                        activeBook: { name: "Mark" },
+                        activeChapterNumber: 2
+                    }
+                }];
+            }
+        }
+    };
+    const suggestMockPlugin = {
+        app: suggestMockApp,
+        settings: {
+            autoExpandBibleReferences: true,
+            autoExpandTriggerPrefix: "--"
+        }
+    };
+
+    const suggest = new BibleEditorSuggest(suggestMockPlugin as any);
+
+    // Test onTrigger
+    const suggestMockEditor = {
+        getLine: (lineNum: number) => "Reference --Joh",
+        posToOffset: (pos: any) => 15,
+        getCursor: () => ({ line: 0, ch: 15 })
+    };
+    const trigger = suggest.onTrigger({ line: 0, ch: 15 }, suggestMockEditor as any, {} as any);
+    assert(trigger !== null, "onTrigger triggers on valid prefix + query");
+    assert(trigger?.query === "Joh", "onTrigger extracts correct query");
+
+    // Test getSuggestions - Book Autocomplete
+    const suggestionsBook = suggest.getSuggestions({ query: "Joh" } as any);
+    assert(suggestionsBook.length > 0, "getSuggestions returns matching books");
+    assert(suggestionsBook.some(s => s.book === "John"), "Autocompletes 'John' when query is 'Joh'");
+
+    // Test getSuggestions - Context Chapter/Verse autocomplete
+    const suggestionsContext = suggest.getSuggestions({ query: "16" } as any);
+    assert(suggestionsContext.length > 0, "getSuggestions returns context suggestions when typing numbers");
+    assert(suggestionsContext[0].book === "Mark", "Suggests active sidecar book");
+    assert(suggestionsContext[0].chapter === 2, "Suggests active sidecar chapter");
+    assert(suggestionsContext[0].startVerse === 16, "Suggests typed verse");
+
+    // Test getSuggestions - Trailing Colon
+    const suggestionsColon = suggest.getSuggestions({ query: "Mark 2:" } as any);
+    assert(suggestionsColon.length === 5, "Suggests 5 verses on trailing colon");
+    assert(suggestionsColon[0].book === "Mark" && suggestionsColon[0].chapter === 2 && suggestionsColon[0].startVerse === 1, "First suggestion matches verse 1");
+
+    // Test getSuggestions - Trailing Dash (John 3:16-)
+    const suggestionsDash = suggest.getSuggestions({ query: "John 3:16-" } as any);
+    assert(suggestionsDash.length === 5, "Suggests 5 ranges on trailing dash");
+    assert(suggestionsDash[0].book === "John" && suggestionsDash[0].chapter === 3 && suggestionsDash[0].startVerse === 16 && suggestionsDash[0].endVerse === 17, "First suggestion matches range 16-17");
+
+    // Test getSuggestions - Context Trailing Dash (16-)
+    const suggestionsContextDash = suggest.getSuggestions({ query: "16-" } as any);
+    assert(suggestionsContextDash.length === 5, "Suggests 5 ranges on context trailing dash");
+    assert(suggestionsContextDash[0].book === "Mark" && suggestionsContextDash[0].chapter === 2 && suggestionsContextDash[0].startVerse === 16 && suggestionsContextDash[0].endVerse === 17, "First suggestion matches context range 16-17");
+
+    // Test getSuggestions - Format list for standard query
+    const suggestionsFormats = suggest.getSuggestions({ query: "John 3:16" } as any);
+    assert(suggestionsFormats.length === 4, "Suggests 4 formats for standard reference");
+    assert(suggestionsFormats[0].suffix === "link", "First format option is Link");
+    assert(suggestionsFormats[1].suffix === "passage", "Second format option is Passage");
+    assert(suggestionsFormats[2].suffix === "l", "Third format option is List");
+    assert(suggestionsFormats[3].suffix === "q", "Fourth format option is Quote");
+
+    // Test context shorthand links: query is "16" (activeBook = "Mark", activeChapter = 2)
+    const suggestionsContextShorthand = suggest.getSuggestions({ query: "16" } as any);
+    const linkOption = suggestionsContextShorthand.find(s => s.suffix === "link");
+    assert(linkOption !== undefined, "Link option exists in context suggestions list");
+    assert(linkOption?.shorthandLabel === "v16", "shorthandLabel is set to 'v16' for verse shorthand");
+    assert(linkOption?.displayText === "v16", "displayText is set to shorthand 'v16' for Link suffix");
+
+    // Test getSuggestions - Suffix matching without "+" (e.g., John 3:16p and 16q)
+    const suggestionsNoPlusP = suggest.getSuggestions({ query: "John 3:16p" } as any);
+    assert(suggestionsNoPlusP.length === 1 && suggestionsNoPlusP[0].suffix === "passage", "Filters to Passage with optional + suffix 'John 3:16p'");
+
+    const suggestionsNoPlusQ = suggest.getSuggestions({ query: "16q" } as any);
+    assert(suggestionsNoPlusQ.length === 1 && suggestionsNoPlusQ[0].suffix === "q", "Filters to Quote with optional + suffix '16q'");
 
     console.log();
 }

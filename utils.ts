@@ -80,6 +80,11 @@ export function cleanHtmlKeepRedSpans(node: any): string {
 			return "\n";
 		}
 
+		const isBlock = ["p", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "li"].includes(tagName);
+		if (isBlock) {
+			return childrenText.trim() + " ";
+		}
+
 		return childrenText;
 	}
 	return "";
@@ -100,6 +105,7 @@ export interface CopySettings {
 	verseReferenceStyle: string;
 	verseReferenceFormat: string;
 	verseReferenceInternalLinking: boolean;
+	gospelQuotesRed?: boolean;
 }
 
 export function compileReferenceLink(
@@ -111,12 +117,13 @@ export function compileReferenceLink(
 	referenceFormat: string
 ): string {
 	const uri = `obsidian://bible?book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${verseVal}`;
+	const separator = rangeStr ? ":" : "";
 	if (internalLinking) {
-		return `[[${bookName}]] [${chapter}:${rangeStr}](${uri})`;
+		return `[[${bookName}]] [${chapter}${separator}${rangeStr}](${uri})`;
 	} else {
 		const label = referenceFormat === "short"
-			? `${chapter}:${rangeStr}`
-			: `${bookName} ${chapter}:${rangeStr}`;
+			? `${chapter}${separator}${rangeStr}`
+			: `${bookName} ${chapter}${separator}${rangeStr}`;
 		return `[${label}](${uri})`;
 	}
 }
@@ -147,6 +154,39 @@ export function compileFormattedPassage(
 		}
 	}
 	return finalText;
+}
+
+export function formatScripturePassage(
+	bookName: string,
+	chapter: number,
+	verses: { verse: number; text: string }[],
+	settings: CopySettings
+): string {
+	if (verses.length === 0) return "";
+
+	const versesList = verses.map((v) => {
+		const supText = convertToSuperscript(v.verse.toString());
+		const uri = `obsidian://bible?book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${v.verse}`;
+		const highlightedText = highlightGospelQuotes(v.text, bookName, settings.gospelQuotesRed || false);
+		return `[${supText}](${uri}) ${highlightedText}`;
+	});
+
+	const scriptureText = versesList.join(" ");
+	const startVerse = verses[0].verse;
+	const endVerse = verses[verses.length - 1].verse;
+	const rangeStr = startVerse === endVerse ? startVerse.toString() : `${startVerse}-${endVerse}`;
+	
+	const vList = verses.map((v) => v.verse).join(",");
+	const referenceLink = compileReferenceLink(
+		bookName,
+		chapter,
+		rangeStr,
+		vList,
+		settings.verseReferenceInternalLinking,
+		settings.verseReferenceFormat
+	);
+
+	return compileFormattedPassage(scriptureText, referenceLink, settings);
 }
 
 export function compileDragText(
@@ -245,7 +285,8 @@ export function compileCopyMessage(
 		const scriptureText = run.verses
 			.map((v) => {
 				const vUri = `obsidian://bible?book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${v.verse}`;
-				return `[${convertToSuperscript(v.verse.toString())}](${vUri}) ${v.text}`;
+				const highlightedText = highlightGospelQuotes(v.text, bookName, settings.gospelQuotesRed || false);
+				return `[${convertToSuperscript(v.verse.toString())}](${vUri}) ${highlightedText}`;
 			})
 			.join(" ");
 
@@ -884,4 +925,170 @@ export function highlightSearchTerms(text: string, parsed: ParsedQuery): string 
 	}
 
 	return html;
+}
+
+export function isNodeInsideRedSpan(node: Node, stopAtElement: Element): boolean {
+	let current: Node | null = node;
+	while (current && current !== stopAtElement) {
+		if (current.nodeType === 1) {
+			const el = current as Element;
+			const tagName = el.tagName.toLowerCase();
+			const styleAttr = el.getAttribute ? (el.getAttribute("style") || "") : "";
+			const classList = el.classList || [];
+			const isRedSpan = tagName === "span" && (
+				styleAttr.includes("color: red") ||
+				(typeof classList.contains === "function" && (
+					classList.contains("woc") ||
+					classList.contains("wj") ||
+					classList.contains("words-of-jesus")
+				))
+			);
+			if (isRedSpan) {
+				return true;
+			}
+		}
+		current = current.parentNode;
+	}
+	return false;
+}
+
+export function getSelectionHtmlPreservingRedSpans(range: Range, verseEl: HTMLElement): string {
+	const fragment = range.cloneContents();
+	const startsInRed = isNodeInsideRedSpan(range.startContainer, verseEl);
+	const endsInRed = isNodeInsideRedSpan(range.endContainer, verseEl);
+	
+	let cleaned = cleanHtmlKeepRedSpans(fragment);
+	if (startsInRed && endsInRed && !cleaned.startsWith('<span style="color: red;">') && !cleaned.endsWith('</span>')) {
+		cleaned = `<span style="color: red;">${cleaned}</span>`;
+	}
+	return cleaned;
+}
+
+export function stripLeadingVerseNumbers(text: string): string {
+	let clean = text.trim();
+	while (true) {
+		const match = clean.match(/^((?:<span[^>]*>)*)([\u2070\u00B9\u00B2\u00B3\u2074-\u2079\s]+)/i);
+		if (!match) break;
+		const len = match[0].length;
+		const prefix = match[1];
+		clean = prefix + clean.substring(len).trim();
+	}
+	return clean;
+}
+
+export function parseHtmlToVerses(
+	html: string,
+	isEsv: boolean,
+	keepHtml: boolean
+): { verse: number; text: string }[] {
+	if (typeof DOMParser === "undefined") {
+		const results: { verse: number; text: string }[] = [];
+		if (isEsv) {
+			const regex = /<b class="(?:verse|chapter)-num"[^>]*>([\d\s:]+)<\/b>/gi;
+			const matches = Array.from(html.matchAll(regex));
+			for (let i = 0; i < matches.length; i++) {
+				const match = matches[i];
+				const matchIndex = match.index || 0;
+				const textContent = match[1];
+				let verseNum = 1;
+				if (match[0].includes("chapter-num")) {
+					const trimmed = textContent.trim();
+					if (trimmed.includes(":")) {
+						verseNum = parseInt(trimmed.split(":")[1]) || 1;
+					} else {
+						verseNum = 1;
+					}
+				} else {
+					verseNum = parseInt(textContent.trim()) || 0;
+				}
+				if (verseNum === 0) continue;
+				
+				const nextIndex = matches[i + 1] ? matches[i + 1].index : html.length;
+				let content = html.substring(matchIndex + match[0].length, nextIndex);
+				if (!keepHtml) {
+					content = content.replace(/<\/p>|<br\s*\/?>|<\/div>/gi, " ").replace(/<[^>]*>?/gm, "").trim();
+				} else {
+					content = content.trim();
+				}
+				results.push({ verse: verseNum, text: content });
+			}
+		} else {
+			const regex = /<span class="v" data-number="(\d+)"[^>]*>[\d\s]*<\/span>/gi;
+			const matches = Array.from(html.matchAll(regex));
+			for (let i = 0; i < matches.length; i++) {
+				const match = matches[i];
+				const matchIndex = match.index || 0;
+				const verseNum = parseInt(match[1]);
+				if (verseNum === 0) continue;
+
+				const nextIndex = matches[i + 1] ? matches[i + 1].index : html.length;
+				let content = html.substring(matchIndex + match[0].length, nextIndex);
+				if (!keepHtml) {
+					content = content.replace(/<\/p>|<br\s*\/?>|<\/div>/gi, " ").replace(/<[^>]*>?/gm, "").trim();
+				} else {
+					content = content.trim();
+				}
+				results.push({ verse: verseNum, text: content });
+			}
+		}
+		return results;
+	}
+
+	const parser = new DOMParser();
+	const doc = parser.parseFromString(html, "text/html");
+	doc.querySelectorAll(".extra_text, .audio, .copyright, .mp3link").forEach(el => el.remove());
+
+	const markers = Array.from(doc.querySelectorAll(isEsv ? "b.verse-num, b.chapter-num, span.chapter-num" : "span.v"));
+	const results: { verse: number; text: string }[] = [];
+
+	for (let i = 0; i < markers.length; i++) {
+		const currentMarker = markers[i];
+		let verseNum = 0;
+		if (isEsv) {
+			const textContent = currentMarker.textContent || "";
+			if (currentMarker.classList.contains("chapter-num") || (currentMarker.tagName.toLowerCase() === "span" && currentMarker.classList.contains("chapter-num"))) {
+				const trimmed = textContent.trim();
+				if (trimmed.includes(":")) {
+					verseNum = parseInt(trimmed.split(":")[1]) || 1;
+				} else {
+					verseNum = 1;
+				}
+			} else {
+				verseNum = parseInt(textContent.trim()) || 0;
+			}
+		} else {
+			verseNum = parseInt(currentMarker.getAttribute("data-number") || currentMarker.textContent || "0");
+		}
+
+		if (verseNum === 0) continue;
+
+		const nextMarker = markers[i + 1];
+		const range = doc.createRange();
+		range.setStartAfter(currentMarker);
+		if (nextMarker) {
+			range.setEndBefore(nextMarker);
+		} else {
+			let endNode: Node = doc.body;
+			while (endNode.lastChild) {
+				endNode = endNode.lastChild;
+			}
+			range.setEndAfter(endNode);
+		}
+
+		const fragment = range.cloneContents();
+		let text = "";
+		if (keepHtml) {
+			const tempDiv = doc.createElement("div");
+			tempDiv.appendChild(fragment);
+			text = tempDiv.innerHTML;
+		} else {
+			const tempDiv = doc.createElement("div");
+			tempDiv.appendChild(fragment);
+			text = cleanHtmlKeepRedSpans(tempDiv);
+		}
+
+		results.push({ verse: verseNum, text });
+	}
+
+	return results;
 }

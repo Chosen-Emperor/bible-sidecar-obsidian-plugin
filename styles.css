@@ -1808,4 +1808,28 @@ mark.search-match {
 .parallel-container-wrapper .parallel-empty-verse {
     border-bottom: 1px dashed var(--sidecar-border);
     opacity: 0.25;
+}
+
+/* Bible Suggest Item Formatting */
+.bible-suggest-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    font-size: var(--font-ui-small);
+}
+
+.bible-suggest-icon-label {
+    font-weight: 600;
+    color: var(--text-accent);
+    margin-right: 12px;
+    flex-shrink: 0;
+}
+
+.bible-suggest-ref-label {
+    color: var(--text-normal);
+    text-align: right;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }

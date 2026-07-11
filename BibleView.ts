@@ -1,5 +1,5 @@
 import { ItemView, WorkspaceLeaf, requestUrl, Notice, Platform, setIcon, Modal, Setting, App } from "obsidian";
-import { convertToSuperscript, convertToNumber, compileCopyMessage, compileDragText, copyToClipboard, BIBLE_BOOK_IDS, isNavigationAllowedOffline, calculateDownloadProportion, isOldTestament, getBookDisplayName, searchBibleLocalData, highlightSearchTerms, parseAdvancedSearchQuery, renderStrongsHtml, extractCrossReferences } from "./utils";
+import { convertToSuperscript, convertToNumber, compileCopyMessage, compileDragText, copyToClipboard, BIBLE_BOOK_IDS, isNavigationAllowedOffline, calculateDownloadProportion, isOldTestament, getBookDisplayName, searchBibleLocalData, highlightSearchTerms, parseAdvancedSearchQuery, renderStrongsHtml, extractCrossReferences, parseHtmlToVerses } from "./utils";
 import { SidecarRenderer } from "./SidecarRenderer";
 export const BibleViewType = "bible-view-plus";
 
@@ -776,50 +776,11 @@ export class BibleView extends ItemView {
 		}
 
 		const esvHtmlParser = (html: string): { verse: number; text: string }[] => {
-			const parser = new DOMParser();
-			const doc = parser.parseFromString(html, "text/html");
-			doc.querySelectorAll(".extra_text, .audio, .copyright, .mp3link").forEach(el => el.remove());
-			const spans = doc.querySelectorAll("b.verse-num, b.chapter-num, span.chapter-num");
-			const parsed: { verse: number; text: string }[] = [];
-			spans.forEach((span) => {
-				let verseNum = parseInt(span.textContent || "0");
-				if (span.classList.contains("chapter-num") || (span.tagName.toLowerCase() === "span" && span.classList.contains("chapter-num"))) {
-					verseNum = 1;
-				}
-				if (verseNum === 0) return;
-				
-				let text = "";
-				let next = span.nextSibling;
-				while (next && !(next instanceof Element && (next.classList.contains("verse-num") || next.classList.contains("chapter-num") || (next.tagName.toLowerCase() === "b" && next.classList.contains("verse-num"))))) {
-					text += next.textContent || "";
-					next = next.nextSibling;
-				}
-				parsed.push({ verse: verseNum, text });
-			});
-			return parsed;
+			return parseHtmlToVerses(html, true, false);
 		};
 
 		const apiBibleHtmlParser = (html: string): { verse: number; text: string }[] => {
-			const parser = new DOMParser();
-			const doc = parser.parseFromString(html, "text/html");
-			const spans = doc.querySelectorAll("span.v");
-			const parsed: { verse: number; text: string }[] = [];
-			spans.forEach((span) => {
-				const verseNum = parseInt(span.getAttribute("data-number") || span.textContent || "0");
-				if (verseNum === 0) return;
-				
-				let text = "";
-				let next = span.nextSibling;
-				if (!next && span.parentElement && span.parentElement.classList.contains("verse-span")) {
-					next = span.parentElement.nextSibling;
-				}
-				while (next && !(next instanceof Element && (next.classList.contains("v") || next.querySelector(".v")))) {
-					text += next.textContent || "";
-					next = next.nextSibling;
-				}
-				parsed.push({ verse: verseNum, text });
-			});
-			return parsed;
+			return parseHtmlToVerses(html, false, false);
 		};
 
 		const results = searchBibleLocalData(query, localData, esvHtmlParser, apiBibleHtmlParser);
