@@ -15,7 +15,13 @@ import {
 	highlightSearchTerms, 
 	parseAdvancedSearchQuery, 
 	renderStrongsHtml, 
-	extractCrossReferences 
+	extractCrossReferences,
+	parseHtmlToVerses,
+	stripLeadingVerseNumbers,
+	getSelectionHtmlPreservingRedSpans,
+	cleanHtmlKeepRedSpans,
+	isNodeInsideRedSpan,
+	compileReferenceLink
 } from "./utils";
 
 export class SidecarRenderer {
@@ -828,48 +834,27 @@ export class SidecarRenderer {
 			doc.querySelectorAll(".extra_text, .audio, .copyright, .mp3link").forEach(el => el.remove());
 
 			if (separate) {
-				const spans = doc.querySelectorAll(isEsv ? "b.verse-num, b.chapter-num, span.chapter-num" : "span.v");
-				spans.forEach((span) => {
-					let verseNumText = isEsv ? (span.textContent?.trim() || "") : (span.getAttribute("data-number") || span.textContent || "");
-					if (isEsv) {
-						if (verseNumText.includes(":")) {
-							verseNumText = verseNumText.split(":")[1]; // Handle "1:1" -> "1"
-						} else if (span.classList.contains("chapter-num") || (span.tagName.toLowerCase() === "span" && span.classList.contains("chapter-num"))) {
-							verseNumText = "1"; // Handle "3" -> "1"
-						}
-					}
-					const verseNum = verseNumText.trim();
-					const formattedVerseNumber = convertToSuperscript(verseNum);
+				const parsed = parseHtmlToVerses(rawHtml, isEsv, true);
+				parsed.forEach((verse) => {
+					const formattedVerseNumber = convertToSuperscript(verse.verse);
+					let displayHtml = verse.text.replace(/^\d+:\d+\s*/, "");
+					const cleanText = displayHtml.replace(/<br\s*\/?>/gi, " ").replace(/<[^>]*>?/gm, "");
 
-					let text = "";
-					let next = span.nextSibling;
-					const verseClass = isEsv ? "verse-num" : "v";
-					if (!next && !isEsv && span.parentElement && span.parentElement.classList.contains("verse-span")) {
-						next = span.parentElement.nextSibling;
-					}
-					while (next && !(next instanceof Element && (
-						next.classList.contains(verseClass) || 
-						(!isEsv && next.querySelector("." + verseClass)) ||
-						next.classList.contains("chapter-num") || 
-						(next.tagName.toLowerCase() === "b" && next.classList.contains("verse-num")) ||
-						(next.tagName.toLowerCase() === "span" && next.classList.contains("chapter-num"))
-					))) {
-						if (next instanceof Element) {
-							text += next.outerHTML;
-						} else {
-							text += next.textContent || "";
-						}
-						next = next.nextSibling;
+					if (this.settings.gospelQuotesRed && ["matthew", "mark", "luke", "john"].includes(book.name.toLowerCase())) {
+						displayHtml = displayHtml
+							.replace(/"([^"]+)"/g, '"<span style="color: red;">$1</span>"')
+							.replace(/\u201c([^\u201d]+)\u201d/g, '\u201c<span style="color: red;">$1</span>\u201d');
 					}
 
-					let cleanText = text.trim().replace(/\n+/g, " ");
-					cleanText = cleanText.replace(/^\d+:\d+\s*/, "");
-					let displayHtml = cleanText;
+					// Strong's concordance — KJV/Bolls.life only
+					if (this.settings.showStrongsNumbers && (displayHtml.includes("<H") || displayHtml.includes("<S") || displayHtml.includes("<G"))) {
+						displayHtml = renderStrongsHtml(displayHtml, book.bookid >= 40);
+					}
 
 					const formattedVerse = chapterContent.createEl("div", { 
 						cls: "verse",
 						attr: { 
-							"data-verse": verseNum
+							"data-verse": verse.verse
 						}
 					});
 					formattedVerse.innerHTML = `<span class="verse-num" draggable="true">${formattedVerseNumber}</span> ${displayHtml}`;
@@ -930,70 +915,7 @@ export class SidecarRenderer {
 				
 				const inlineDiv = document.createElement("div");
 				inlineDiv.innerHTML = cleanHtml;
-				const spans = inlineDiv.querySelectorAll(isEsv ? "b.verse-num, b.chapter-num, span.chapter-num" : "span.v");
-				spans.forEach((span) => {
-					let verseNumText = isEsv ? (span.textContent?.trim() || "") : (span.getAttribute("data-number") || span.textContent || "");
-					if (isEsv) {
-						if (verseNumText.includes(":")) {
-							verseNumText = verseNumText.split(":")[1]; // Handle "1:1" -> "1"
-						} else if (span.classList.contains("chapter-num") || (span.tagName.toLowerCase() === "span" && span.classList.contains("chapter-num"))) {
-							verseNumText = "1"; // Handle "3" -> "1"
-						}
-					}
-					const verseNum = verseNumText.trim();
-					const formattedVerseNumber = convertToSuperscript(verseNum);
-					
-					// Collect all siblings up to the next verse or chapter span
-					const siblingsToWrap: Node[] = [];
-					let next = span.nextSibling;
-					const verseClass = isEsv ? "verse-num" : "v";
-					if (!next && !isEsv && span.parentElement && span.parentElement.classList.contains("verse-span")) {
-						next = span.parentElement.nextSibling;
-					}
-					
-					while (next && !(next instanceof Element && (
-						next.classList.contains(verseClass) || 
-						(!isEsv && next.querySelector("." + verseClass)) ||
-						next.classList.contains("chapter-num") || 
-						(next.tagName.toLowerCase() === "b" && next.classList.contains("verse-num")) ||
-						(next.tagName.toLowerCase() === "span" && next.classList.contains("chapter-num"))
-					))) {
-						siblingsToWrap.push(next);
-						next = next.nextSibling;
-					}
-
-					// Create the wrapper span
-					const verseWrapper = document.createElement("span");
-					verseWrapper.className = "verse-inline";
-					verseWrapper.setAttribute("data-verse", verseNum);
-					
-					// Insert wrapper before current span
-					span.parentNode?.insertBefore(verseWrapper, span);
-					
-					// Append new verse-num element inside wrapper
-					const verseNumSpan = document.createElement("span");
-					verseNumSpan.className = "verse-num";
-					verseNumSpan.setAttribute("draggable", "true");
-					verseNumSpan.textContent = formattedVerseNumber;
-					verseWrapper.appendChild(verseNumSpan);
-					verseWrapper.appendChild(document.createTextNode("\u00A0"));
-					
-					// Strip redundant 1:1 prefix on first sibling text if present
-					if (siblingsToWrap.length > 0) {
-						const firstSib = siblingsToWrap[0];
-						if (firstSib.nodeType === Node.TEXT_NODE && firstSib.textContent) {
-							firstSib.textContent = firstSib.textContent.replace(/^\s*\d+:\d+\s*/, "");
-						}
-					}
-
-					// Move sibling nodes inside wrapper
-					siblingsToWrap.forEach(sibling => {
-						verseWrapper.appendChild(sibling);
-					});
-
-					// Remove original span
-					span.remove();
-				});
+				wrapInlineVerses(inlineDiv, isEsv);
 
 				// Second-pass scanner for ESV API elements to tag elements with data-verse
 				const allEls = inlineDiv.querySelectorAll('*');
@@ -1237,67 +1159,92 @@ export class SidecarRenderer {
 
 				const isPrimary = startVerseEl.getAttribute("data-primary") !== "false";
 				const resolvedBookName = book.name;
+				const fragment = range.cloneContents();
+				const tempDiv = document.createElement("div");
+				tempDiv.appendChild(fragment);
 
+				const hasParallelAttr = startVerseEl.hasAttribute("data-primary");
 				const selector = isPrimary ? '.verse[data-primary="true"], .verse-inline[data-primary="true"]' : '.verse[data-primary="false"], .verse-inline[data-primary="false"]';
-				const querySelector = (this.settings.parallelEnabled && this.settings.secondaryBibleVersion) ? selector : '.verse, .verse-inline';
-				const allVerses = Array.from(chapterContent.querySelectorAll(querySelector)) as HTMLElement[];
+				const querySelector = hasParallelAttr ? selector : '.verse, .verse-inline';
+				let selectedVerseEls = Array.from(tempDiv.querySelectorAll(querySelector)) as HTMLElement[];
 
-				const startIndex = allVerses.indexOf(startVerseEl);
-				const endIndex = allVerses.indexOf(endVerseEl);
-
-				if (startIndex === -1 || endIndex === -1) return;
-
-				const startIdx = Math.min(startIndex, endIndex);
-				const endIdx = Math.max(startIndex, endIndex);
-				const selectedVerses = allVerses.slice(startIdx, endIdx + 1);
-
-				let dragPayload = "";
-				const verseNums: number[] = [];
-
-				if (selectedVerses.length === 1) {
-					const vNum = parseInt(selectedVerses[0].getAttribute("data-verse") || "0");
-					if (vNum > 0) verseNums.push(vNum);
-					const cleanText = selection.toString().replace(/^[\u2070\u00B9\u00B2\u00B3\u2074-\u2079\s]+/g, "");
-					const superscript = convertToSuperscript(vNum.toString());
-					const vUri = `obsidian://bible?book=${encodeURIComponent(resolvedBookName)}&chapter=${i}&verse=${vNum}`;
-					dragPayload = `[${superscript}](${vUri}) ${cleanText.trim()}`;
-				} else {
-					for (let idx = 0; idx < selectedVerses.length; idx++) {
-						const el = selectedVerses[idx];
-						const vNum = parseInt(el.getAttribute("data-verse") || "0");
-						if (vNum > 0) verseNums.push(vNum);
-
-						let verseText = "";
-						try {
-							if (idx === 0) {
-								const subRange = document.createRange();
-								subRange.setStart(range.startContainer, range.startOffset);
-								subRange.setEndAfter(el.lastChild || el);
-								verseText = subRange.toString();
-							} else if (idx === selectedVerses.length - 1) {
-								const subRange = document.createRange();
-								subRange.setStartBefore(el.firstChild || el);
-								subRange.setEnd(range.endContainer, range.endOffset);
-								verseText = subRange.toString();
-							} else {
-								verseText = el.textContent || "";
-							}
-						} catch (err: any) {
-							verseText = el.textContent || "";
+				// Filter out nested elements to avoid duplicating text
+				selectedVerseEls = selectedVerseEls.filter(el => {
+					let parent = el.parentElement;
+					while (parent) {
+						if (selectedVerseEls.includes(parent)) {
+							return false;
 						}
+						parent = parent.parentElement;
+					}
+					return true;
+				});
 
-						// Strip leading verse number superscripts and whitespace
-						verseText = verseText.replace(/^[\u2070\u00B9\u00B2\u00B3\u2074-\u2079\s]+/g, "");
+				if (selectedVerseEls.length === 0) {
+					const vNum = parseInt(startVerseEl.getAttribute("data-verse") || "0");
+					if (vNum > 0) {
+						const startsInRed = isNodeInsideRedSpan(range.startContainer, startVerseEl);
+						const endsInRed = isNodeInsideRedSpan(range.endContainer, startVerseEl);
+						let cleanText = cleanHtmlKeepRedSpans(tempDiv);
+						if (startsInRed && endsInRed && !cleanText.startsWith('<span style="color: red;">') && !cleanText.endsWith('</span>')) {
+							cleanText = `<span style="color: red;">${cleanText}</span>`;
+						}
+						cleanText = stripLeadingVerseNumbers(cleanText);
 
 						const superscript = convertToSuperscript(vNum.toString());
 						const vUri = `obsidian://bible?book=${encodeURIComponent(resolvedBookName)}&chapter=${i}&verse=${vNum}`;
-						const linkedSup = `[${superscript}](${vUri})`;
-
-						if (idx > 0) {
-							dragPayload += ` ${linkedSup} ${verseText.trim()}`;
-						} else {
-							dragPayload += `${linkedSup} ${verseText.trim()}`;
+						const dragPayload = `[${superscript}](${vUri}) ${cleanText.trim()}`;
+						
+						const referenceLink = compileReferenceLink(
+							resolvedBookName,
+							i,
+							vNum.toString(),
+							vNum.toString(),
+							this.settings.verseReferenceInternalLinking,
+							this.settings.verseReferenceFormat
+						);
+						const dragText = compileFormattedPassage(dragPayload, referenceLink, this.settings);
+						if (e.dataTransfer) {
+							e.dataTransfer.setData("text/plain", dragText);
+							e.dataTransfer.effectAllowed = "copyMove";
 						}
+					}
+					return;
+				}
+
+				const verseMap = new Map<number, string[]>();
+				const verseNums: number[] = [];
+
+				for (let idx = 0; idx < selectedVerseEls.length; idx++) {
+					const el = selectedVerseEls[idx];
+					const vNum = parseInt(el.getAttribute("data-verse") || "0");
+					if (vNum <= 0) continue;
+
+					let verseText = cleanHtmlKeepRedSpans(el);
+					verseText = stripLeadingVerseNumbers(verseText).trim();
+					if (!verseText) continue;
+
+					if (!verseMap.has(vNum)) {
+						verseMap.set(vNum, []);
+						verseNums.push(vNum);
+					}
+					verseMap.get(vNum)!.push(verseText);
+				}
+
+				let dragPayload = "";
+				for (let idx = 0; idx < verseNums.length; idx++) {
+					const vNum = verseNums[idx];
+					const segments = verseMap.get(vNum) || [];
+					const mergedText = segments.join(" ");
+
+					const superscript = convertToSuperscript(vNum.toString());
+					const vUri = `obsidian://bible?book=${encodeURIComponent(resolvedBookName)}&chapter=${i}&verse=${vNum}`;
+					const linkedSup = `[${superscript}](${vUri})`;
+
+					if (idx > 0) {
+						dragPayload += ` ${linkedSup} ${mergedText}`;
+					} else {
+						dragPayload += `${linkedSup} ${mergedText}`;
 					}
 				}
 
@@ -1306,15 +1253,18 @@ export class SidecarRenderer {
 				const firstVerse = verseNums[0];
 				const lastVerse = verseNums[verseNums.length - 1];
 				const rangeStr = firstVerse === lastVerse ? firstVerse.toString() : `${firstVerse}-${lastVerse}`;
+				const allVersesStr = verseNums.join(",");
 
-				const dragText = compileDragText(
-					dragPayload,
+				const referenceLink = compileReferenceLink(
 					resolvedBookName,
 					i,
 					rangeStr,
-					verseNums,
-					this.settings
+					allVersesStr,
+					this.settings.verseReferenceInternalLinking,
+					this.settings.verseReferenceFormat
 				);
+
+				const dragText = compileFormattedPassage(dragPayload, referenceLink, this.settings);
 
 				if (e.dataTransfer) {
 					e.dataTransfer.setData("text/plain", dragText);
@@ -1328,24 +1278,48 @@ export class SidecarRenderer {
 				if (vNum <= 0) return;
 
 				const resolvedBookName = book.name;
+				const isPrimary = verseEl.getAttribute("data-primary") !== "false";
 				
-				// Extract verse text
-				let verseText = verseEl.textContent || "";
-				verseText = verseText.replace(/^[\u2070\u00B9\u00B2\u00B3\u2074-\u2079\s]+/g, "");
+				const hasParallelAttr = verseEl.hasAttribute("data-primary");
+				const selector = isPrimary ? `.verse[data-verse="${vNum}"][data-primary="true"], .verse-inline[data-verse="${vNum}"][data-primary="true"]` : `.verse[data-verse="${vNum}"][data-primary="false"], .verse-inline[data-verse="${vNum}"][data-primary="false"]`;
+				const querySelector = hasParallelAttr ? selector : `.verse[data-verse="${vNum}"], .verse-inline[data-verse="${vNum}"]`;
+				let verseEls = Array.from(chapterContent.querySelectorAll(querySelector)) as HTMLElement[];
+
+				// Filter out nested elements to avoid duplicating text
+				verseEls = verseEls.filter(el => {
+					let parent = el.parentElement;
+					while (parent) {
+						if (verseEls.includes(parent)) {
+							return false;
+						}
+						parent = parent.parentElement;
+					}
+					return true;
+				});
+
+				const segments: string[] = [];
+				verseEls.forEach(el => {
+					let text = cleanHtmlKeepRedSpans(el);
+					text = stripLeadingVerseNumbers(text).trim();
+					if (text) {
+						segments.push(text);
+					}
+				});
+
+				const verseText = segments.join(" ");
 
 				const superscript = convertToSuperscript(vNum.toString());
 				const vUri = `obsidian://bible?book=${encodeURIComponent(resolvedBookName)}&chapter=${i}&verse=${vNum}`;
-				const dragPayload = `[${superscript}](${vUri}) ${verseText.trim()}`;
+				const dragPayload = `[${superscript}](${vUri}) ${verseText}`;
 
-				let referenceLink = "";
-				if (this.settings.verseReferenceInternalLinking) {
-					referenceLink = `[[${resolvedBookName}]] [${i}:${vNum}](${vUri})`;
-				} else {
-					const label = this.settings.verseReferenceFormat === "short"
-						? `${i}:${vNum}`
-						: `${resolvedBookName} ${i}:${vNum}`;
-					referenceLink = `[${label}](${vUri})`;
-				}
+				const referenceLink = compileReferenceLink(
+					resolvedBookName,
+					i,
+					vNum.toString(),
+					vNum.toString(),
+					this.settings.verseReferenceInternalLinking,
+					this.settings.verseReferenceFormat
+				);
 
 				const dragText = compileFormattedPassage(dragPayload, referenceLink, this.settings);
 
@@ -1372,66 +1346,90 @@ export class SidecarRenderer {
 
 			const isPrimary = startVerseEl.getAttribute("data-primary") !== "false";
 			const resolvedBookName = book.name;
+			const fragment = range.cloneContents();
+			const tempDiv = document.createElement("div");
+			tempDiv.appendChild(fragment);
 
+			const hasParallelAttr = startVerseEl.hasAttribute("data-primary");
 			const selector = isPrimary ? '.verse[data-primary="true"], .verse-inline[data-primary="true"]' : '.verse[data-primary="false"], .verse-inline[data-primary="false"]';
-			const querySelector = (this.settings.parallelEnabled && this.settings.secondaryBibleVersion) ? selector : '.verse, .verse-inline';
-			const allVerses = Array.from(chapterContent.querySelectorAll(querySelector)) as HTMLElement[];
+			const querySelector = hasParallelAttr ? selector : '.verse, .verse-inline';
+			let selectedVerseEls = Array.from(tempDiv.querySelectorAll(querySelector)) as HTMLElement[];
 
-			const startIndex = allVerses.indexOf(startVerseEl);
-			const endIndex = allVerses.indexOf(endVerseEl);
-
-			if (startIndex === -1 || endIndex === -1) return;
-
-			const startIdx = Math.min(startIndex, endIndex);
-			const endIdx = Math.max(startIndex, endIndex);
-			const selectedVerses = allVerses.slice(startIdx, endIdx + 1);
-
-			let copyPayload = "";
-			const verseNums: number[] = [];
-
-			if (selectedVerses.length === 1) {
-				const vNum = parseInt(selectedVerses[0].getAttribute("data-verse") || "0");
-				if (vNum > 0) verseNums.push(vNum);
-				const cleanText = selection.toString().replace(/^[\u2070\u00B9\u00B2\u00B3\u2074-\u2079\s]+/g, "");
-				const superscript = convertToSuperscript(vNum.toString());
-				const vUri = `obsidian://bible?book=${encodeURIComponent(resolvedBookName)}&chapter=${i}&verse=${vNum}`;
-				copyPayload = `[${superscript}](${vUri}) ${cleanText.trim()}`;
-			} else {
-				for (let idx = 0; idx < selectedVerses.length; idx++) {
-					const el = selectedVerses[idx];
-					const vNum = parseInt(el.getAttribute("data-verse") || "0");
-					if (vNum > 0) verseNums.push(vNum);
-
-					let verseText = "";
-					try {
-						if (idx === 0) {
-							const subRange = document.createRange();
-							subRange.setStart(range.startContainer, range.startOffset);
-							subRange.setEndAfter(el.lastChild || el);
-							verseText = subRange.toString();
-						} else if (idx === selectedVerses.length - 1) {
-							const subRange = document.createRange();
-							subRange.setStartBefore(el.firstChild || el);
-							subRange.setEnd(range.endContainer, range.endOffset);
-							verseText = subRange.toString();
-						} else {
-							verseText = el.textContent || "";
-						}
-					} catch (err: any) {
-						verseText = el.textContent || "";
+			// Filter out nested elements to avoid duplicating text
+			selectedVerseEls = selectedVerseEls.filter(el => {
+				let parent = el.parentElement;
+				while (parent) {
+					if (selectedVerseEls.includes(parent)) {
+						return false;
 					}
+					parent = parent.parentElement;
+				}
+				return true;
+			});
 
-					verseText = verseText.replace(/^[\u2070\u00B9\u00B2\u00B3\u2074-\u2079\s]+/g, "");
+			if (selectedVerseEls.length === 0) {
+				const vNum = parseInt(startVerseEl.getAttribute("data-verse") || "0");
+				if (vNum > 0) {
+					const startsInRed = isNodeInsideRedSpan(range.startContainer, startVerseEl);
+					const endsInRed = isNodeInsideRedSpan(range.endContainer, startVerseEl);
+					let cleanText = cleanHtmlKeepRedSpans(tempDiv);
+					if (startsInRed && endsInRed && !cleanText.startsWith('<span style="color: red;">') && !cleanText.endsWith('</span>')) {
+						cleanText = `<span style="color: red;">${cleanText}</span>`;
+					}
+					cleanText = stripLeadingVerseNumbers(cleanText);
 
 					const superscript = convertToSuperscript(vNum.toString());
 					const vUri = `obsidian://bible?book=${encodeURIComponent(resolvedBookName)}&chapter=${i}&verse=${vNum}`;
-					const linkedSup = `[${superscript}](${vUri})`;
+					const copyPayload = `[${superscript}](${vUri}) ${cleanText.trim()}`;
+					
+					const referenceLink = compileReferenceLink(
+						resolvedBookName,
+						i,
+						vNum.toString(),
+						vNum.toString(),
+						this.settings.verseReferenceInternalLinking,
+						this.settings.verseReferenceFormat
+					);
+					const formattedText = compileFormattedPassage(copyPayload, referenceLink, this.settings);
+					e.clipboardData?.setData("text/plain", formattedText);
+					e.preventDefault();
+				}
+				return;
+			}
 
-					if (idx > 0) {
-						copyPayload += ` ${linkedSup} ${verseText.trim()}`;
-					} else {
-						copyPayload += `${linkedSup} ${verseText.trim()}`;
-					}
+			const verseMap = new Map<number, string[]>();
+			const verseNums: number[] = [];
+
+			for (let idx = 0; idx < selectedVerseEls.length; idx++) {
+				const el = selectedVerseEls[idx];
+				const vNum = parseInt(el.getAttribute("data-verse") || "0");
+				if (vNum <= 0) continue;
+
+				let verseText = cleanHtmlKeepRedSpans(el);
+				verseText = stripLeadingVerseNumbers(verseText).trim();
+				if (!verseText) continue;
+
+				if (!verseMap.has(vNum)) {
+					verseMap.set(vNum, []);
+					verseNums.push(vNum);
+				}
+				verseMap.get(vNum)!.push(verseText);
+			}
+
+			let copyPayload = "";
+			for (let idx = 0; idx < verseNums.length; idx++) {
+				const vNum = verseNums[idx];
+				const segments = verseMap.get(vNum) || [];
+				const mergedText = segments.join(" ");
+
+				const superscript = convertToSuperscript(vNum.toString());
+				const vUri = `obsidian://bible?book=${encodeURIComponent(resolvedBookName)}&chapter=${i}&verse=${vNum}`;
+				const linkedSup = `[${superscript}](${vUri})`;
+
+				if (idx > 0) {
+					copyPayload += ` ${linkedSup} ${mergedText}`;
+				} else {
+					copyPayload += `${linkedSup} ${mergedText}`;
 				}
 			}
 
@@ -1440,16 +1438,18 @@ export class SidecarRenderer {
 			const firstVerse = verseNums[0];
 			const lastVerse = verseNums[verseNums.length - 1];
 			const rangeStr = firstVerse === lastVerse ? firstVerse.toString() : `${firstVerse}-${lastVerse}`;
+			const allVersesStr = verseNums.join(",");
 
-			const formattedText = compileDragText(
-				copyPayload,
+			const referenceLink = compileReferenceLink(
 				resolvedBookName,
 				i,
 				rangeStr,
-				verseNums,
-				this.settings
+				allVersesStr,
+				this.settings.verseReferenceInternalLinking,
+				this.settings.verseReferenceFormat
 			);
 
+			const formattedText = compileFormattedPassage(copyPayload, referenceLink, this.settings);
 			e.clipboardData?.setData("text/plain", formattedText);
 			e.preventDefault();
 		});
@@ -1559,49 +1559,8 @@ export class SidecarRenderer {
 		}
 		
 		if (chapterData.isEsvApi || chapterData.isApiBible) {
-			const rawHtml = chapterData.html;
-			const isEsv = chapterData.isEsvApi;
-			const parser = new DOMParser();
-			const doc = parser.parseFromString(rawHtml, "text/html");
-			doc.querySelectorAll(".extra_text, .audio, .copyright, .mp3link").forEach(el => el.remove());
-
-			const spans = doc.querySelectorAll(isEsv ? "b.verse-num, b.chapter-num, span.chapter-num" : "span.v");
-			const parsed: { verse: string; text: string }[] = [];
-			spans.forEach((span) => {
-				let verseNumText = isEsv ? (span.textContent?.trim() || "") : (span.getAttribute("data-number") || span.textContent || "");
-				if (isEsv) {
-					if (verseNumText.includes(":")) {
-						verseNumText = verseNumText.split(":")[1];
-					} else if (span.classList.contains("chapter-num") || (span.tagName.toLowerCase() === "span" && span.classList.contains("chapter-num"))) {
-						verseNumText = "1";
-					}
-				}
-				const verseNum = verseNumText.trim();
-				if (!verseNum) return;
-
-				let text = "";
-				let next = span.nextSibling;
-				const verseClass = isEsv ? "verse-num" : "v";
-				if (!next && !isEsv && span.parentElement && span.parentElement.classList.contains("verse-span")) {
-					next = span.parentElement.nextSibling;
-				}
-				while (next && !(next instanceof Element && (
-					next.classList.contains(verseClass) || 
-					(!isEsv && next.querySelector("." + verseClass)) ||
-					next.classList.contains("chapter-num") || 
-					(next.tagName.toLowerCase() === "b" && next.classList.contains("verse-num")) ||
-					(next.tagName.toLowerCase() === "span" && next.classList.contains("chapter-num"))
-				))) {
-					if (next instanceof Element) {
-						text += next.outerHTML;
-					} else {
-						text += next.textContent || "";
-					}
-					next = next.nextSibling;
-				}
-				parsed.push({ verse: verseNum, text: text.trim().replace(/\n+/g, " ") });
-			});
-			return parsed;
+			const parsed = parseHtmlToVerses(chapterData.html, chapterData.isEsvApi, true);
+			return parsed.map(v => ({ verse: v.verse.toString(), text: v.text.trim().replace(/\n+/g, " ") }));
 		}
 		
 		return [];
@@ -2068,4 +2027,96 @@ export class SidecarRenderer {
 			}
 		});
 	}
+}
+
+function wrapInlineVerses(container: HTMLElement, isEsv: boolean) {
+	const markers = Array.from(container.querySelectorAll(isEsv ? "b.verse-num, b.chapter-num, span.chapter-num" : "span.v"));
+	const markerVerses = new Map<Element, number>();
+	markers.forEach(span => {
+		let verseNumText = isEsv ? (span.textContent?.trim() || "") : (span.getAttribute("data-number") || span.textContent || "");
+		if (isEsv) {
+			if (verseNumText.includes(":")) {
+				verseNumText = verseNumText.split(":")[1];
+			} else if (span.classList.contains("chapter-num") || (span.tagName.toLowerCase() === "span" && span.classList.contains("chapter-num"))) {
+				verseNumText = "1";
+			}
+		}
+		const vNum = parseInt(verseNumText.trim()) || 1;
+		markerVerses.set(span, vNum);
+	});
+
+	let currentVerse = 0;
+	let currentRun: Node[] = [];
+	let currentParent: Node | null = null;
+
+	const flushRun = () => {
+		if (currentRun.length === 0 || currentVerse === 0) {
+			currentRun = [];
+			return;
+		}
+		const parent = currentParent;
+		if (!parent) return;
+
+		const wrapper = container.ownerDocument.createElement("span");
+		wrapper.className = "verse-inline";
+		wrapper.setAttribute("data-verse", currentVerse.toString());
+		
+		parent.insertBefore(wrapper, currentRun[0]);
+		currentRun.forEach(node => wrapper.appendChild(node));
+		currentRun = [];
+	};
+
+	const walk = (node: Node) => {
+		if (node.nodeType === 1) {
+			const el = node as Element;
+			if (markerVerses.has(el)) {
+				flushRun();
+				currentVerse = markerVerses.get(el)!;
+
+				const nextSib = el.nextSibling;
+				if (nextSib && nextSib.nodeType === 3 && nextSib.textContent) {
+					nextSib.textContent = nextSib.textContent.replace(/^\s*\d+:\d+\s*/, "");
+				}
+				
+				const formattedNum = convertToSuperscript(currentVerse.toString());
+				const verseNumSpan = container.ownerDocument.createElement("span");
+				verseNumSpan.className = "verse-num";
+				verseNumSpan.setAttribute("draggable", "true");
+				verseNumSpan.textContent = formattedNum;
+
+				el.parentNode?.insertBefore(verseNumSpan, el);
+				const nbsp = container.ownerDocument.createTextNode("\u00A0");
+				el.parentNode?.insertBefore(nbsp, el);
+				
+				currentParent = el.parentNode;
+				currentRun.push(verseNumSpan, nbsp);
+
+				el.remove();
+				return;
+			}
+
+			const tagName = el.tagName.toLowerCase();
+			const isBlock = ["p", "div", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "li", "ul", "ol"].includes(tagName);
+			
+			if (isBlock) {
+				flushRun();
+				const children = Array.from(el.childNodes);
+				children.forEach(child => walk(child));
+				flushRun();
+				return;
+			}
+		}
+
+		if (node.parentNode) {
+			if (currentParent !== node.parentNode) {
+				flushRun();
+				currentParent = node.parentNode;
+			}
+			currentRun.push(node);
+		}
+	};
+
+	const topChildren = Array.from(container.childNodes);
+	topChildren.forEach(child => walk(child));
+	flushRun();
 }

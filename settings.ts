@@ -1,17 +1,25 @@
-import BibleSidecarPlugin, { DEFAULT_SETTINGS } from "main";
-import { App, PluginSettingTab, Setting, requestUrl, Notice } from "obsidian";
-import { compileAutoExpandOutput, compileReferenceLink } from "./utils";
+import { App, PluginSettingTab, Setting, Notice } from "obsidian";
+import BibleSidecarPlugin from "./main";
+import { DEFAULT_SETTINGS } from "./main";
+import {
+	compileReferenceLink,
+	compileAutoExpandOutput
+} from "./utils";
+
+interface FileAdapter {
+	exists(path: string): Promise<boolean>;
+	read(path: string): Promise<string>;
+	write(path: string, content: string): Promise<void>;
+	remove(path: string): Promise<void>;
+}
 
 export class BibleSidecarSettingsTab extends PluginSettingTab {
 	plugin: BibleSidecarPlugin;
-	containerEl: HTMLElement;
+	activeTab: string = "reader";
 	esvStatus: "none" | "validating" | "success" | "error" = "none";
 	esvError: string = "";
 	apiBibleStatus: "none" | "validating" | "success" | "error" = "none";
 	apiBibleError: string = "";
-	activeTab: string = "general";
-	downloadProgress: number | null = null;
-	premiumDetailsOpen: boolean = false;
 	autoExpandDetailsOpen: boolean = false;
 
 	constructor(app: App, plugin: BibleSidecarPlugin) {
@@ -30,13 +38,15 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 		const tabHeader = containerEl.createDiv({ cls: "bible-settings-tab-container" });
 
 		const tabs = [
-			{ id: "general", label: "General" },
-			{ id: "offline", label: "Offline Manager" },
-			{ id: "copying", label: "Copy & Formatting" },
-			{ id: "autoexpand", label: "Auto-Expand" },
-			{ id: "study", label: "Study Tools" },
-			{ id: "api", label: "API Configuration" }
+			{ id: "reader", label: "📖 Reader & Sidecar View" },
+			{ id: "data", label: "🌐 Translations & APIs" },
+			{ id: "copying", label: "📋 Copy & Formatting" },
+			{ id: "autocomplete", label: "🧠 Autocomplete (IntelliSense)" }
 		];
+
+		if (!tabs.some(t => t.id === this.activeTab)) {
+			this.activeTab = "reader";
+		}
 
 		tabs.forEach(t => {
 			const btn = tabHeader.createEl("button", {
@@ -50,22 +60,20 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 		});
 
 		// Render Active Tab content
-		if (this.activeTab === "general") {
-			this.renderGeneralTab(containerEl);
-		} else if (this.activeTab === "offline") {
-			this.renderOfflineTab(containerEl);
+		if (this.activeTab === "reader") {
+			this.renderReaderSidecarTab(containerEl);
+		} else if (this.activeTab === "data") {
+			this.renderTranslationsApiTab(containerEl);
 		} else if (this.activeTab === "copying") {
 			this.renderCopyTab(containerEl);
-		} else if (this.activeTab === "autoexpand") {
-			this.renderAutoExpandTab(containerEl);
-		} else if (this.activeTab === "study") {
-			this.renderStudyToolsTab(containerEl);
-		} else if (this.activeTab === "api") {
-			this.renderApiKeysTab(containerEl);
+		} else if (this.activeTab === "autocomplete") {
+			this.renderAutocompleteTab(containerEl);
 		}
 	}
 
-	renderGeneralTab(container: HTMLElement) {
+	renderReaderSidecarTab(container: HTMLElement) {
+		container.createEl("h3", { text: "Language & Version Preferences", cls: "bible-settings-subheading" });
+
 		const LANGUAGE_DEFAULT_VERSIONS: Record<string, string> = {
 			en: "ESV", de: "ELB", fr: "NBS", es: "BTX3", pt: "ARA",
 			it: "NR06", nl: "NLD", ru: "SYNOD", ar: "SVD", in: "TB", af: "AFR53"
@@ -212,6 +220,57 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 					});
 			});
 
+		let secondaryVersionSetting: Setting;
+
+		new Setting(container)
+			.setName("Parallel translation view")
+			.setDesc("Show a second Bible translation alongside the primary one. When the panel is narrow (< 480px), tabs replace the side-by-side layout.")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.parallelEnabled)
+					.onChange((value) => {
+						this.plugin.settings.parallelEnabled = value;
+						this.plugin.saveSettings();
+						secondaryVersionSetting.settingEl.style.display = value ? "flex" : "none";
+					});
+			});
+
+		secondaryVersionSetting = new Setting(container)
+			.setName("Secondary Bible version")
+			.setDesc("Choose secondary Bible translation displayed in parallel view (Bolls.life only).")
+			.addDropdown((dropdown) => {
+				const currentLang = this.plugin.settings.bibleLanguage;
+				const languageAvailableVersions: Record<string, string[]> = {
+					en: ["YLT", "KJV", "NKJV", "WEB", "RSV", "CJB", "TS2009", "LXXE", "TLV", "LSB", "NASB", "ESV", "GNV", "DRB", "NIV2011", "NIV", "NLT", "NRSVCE", "NET", "NJB1985", "SPE", "LBP", "AMP", "MSG", "LSV", "BSB"],
+					de: ["MB", "ELB", "SCH", "LUT"],
+					fr: ["NBS"],
+					es: ["BTX3", "RV2004", "PDT", "NVI", "NTV", "LBLA"],
+					pt: ["ARA", "NTJud", "NVIPT", "OL", "NVT", "KJA", "VFL", "NAA", "CNBB", "NBV07", "ALM21", "ARC09"],
+					it: ["NR06", "VULG"],
+					nl: ["NLD", "DSV", "SVRJ", "HSV17"],
+					ru: ["JNT", "NRT", "SYNOD", "TNHR", "RBS2", "BTI"],
+					ar: ["SVD"],
+					in: ["TB"],
+					af: ["AFR53"]
+				};
+				const list = languageAvailableVersions[currentLang] || ["KJV"];
+				list.forEach((v) => {
+					dropdown.addOption(v, v);
+				});
+				dropdown
+					.setValue(this.plugin.settings.secondaryBibleVersion || "KJV")
+					.onChange((value) => {
+						this.plugin.settings.secondaryBibleVersion = value;
+						this.plugin.saveSettings();
+					});
+			});
+
+		secondaryVersionSetting.settingEl.style.display =
+			this.plugin.settings.parallelEnabled ? "flex" : "none";
+
+		container.createEl("hr", { cls: "bible-settings-inner-divider" });
+		container.createEl("h3", { text: "Sidecar View Display Options", cls: "bible-settings-subheading" });
+
 		new Setting(container)
 			.setName("Abbreviate book names in sidecar")
 			.setDesc("When enabled, book cards and sidebar headers will display standard 3-letter abbreviations (e.g. GEN, EXO) instead of full names.")
@@ -220,6 +279,30 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.abbreviateBookNames)
 					.onChange((value) => {
 						this.plugin.settings.abbreviateBookNames = value;
+						this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(container)
+			.setName("Separate verses in sidecar view")
+			.setDesc("When enabled, each verse in the sidecar view is rendered on its own line. When disabled, verses flow as a continuous paragraph.")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.separateVersesSidecar)
+					.onChange((value) => {
+						this.plugin.settings.separateVersesSidecar = value;
+						this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(container)
+			.setName("Hide link icon on Bible references")
+			.setDesc("Hides the default Obsidian external link arrow icon next to Bible reference links to keep notes clean.")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.hideLinkIcon)
+					.onChange((value) => {
+						this.plugin.settings.hideLinkIcon = value;
 						this.plugin.saveSettings();
 					});
 			});
@@ -237,6 +320,68 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 					});
 			});
 
+		container.createEl("hr", { cls: "bible-settings-inner-divider" });
+		container.createEl("h3", { text: "Study Tools & Concordance", cls: "bible-settings-subheading" });
+
+		new Setting(container)
+			.setName("Show cross-references")
+			.setDesc("Display superscript letter markers next to words in ESV and API.Bible chapters. Hover (desktop) or tap (mobile) to see related passages.")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.showCrossReferences)
+					.onChange((value) => {
+						this.plugin.settings.showCrossReferences = value;
+						this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(container)
+			.setName("Color Jesus's words in red (Gospels only)")
+			.setDesc("Highlights all quoted text in the Gospels (Matthew, Mark, Luke, John) in red. Works for modern translations that use quotation marks (e.g. ESV, NIV, NLT, NASB).")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.gospelQuotesRed)
+					.onChange((value) => {
+						this.plugin.settings.gospelQuotesRed = value;
+						this.plugin.saveSettings();
+					});
+			});
+
+		const isKjvCompatible = ["KJV", "YLT", "NKJV"].includes(
+			(this.plugin.settings.bibleVersion || "").toUpperCase()
+		);
+
+		const strongsSetting = new Setting(container)
+			.setName("Show Strong's concordance numbers");
+
+		const descFrag = document.createDocumentFragment();
+		if (isKjvCompatible) {
+			descFrag.appendChild(document.createTextNode("Underline words with Strong's IDs in KJV and other Bolls.life translations. Click any underlined word to look up its Hebrew or Greek definition."));
+		} else {
+			const warnText = descFrag.appendChild(document.createElement("strong"));
+			warnText.style.color = "var(--text-warning)";
+			warnText.setText("⚠️ Strong's numbers are only available for KJV and compatible Bolls.life translations. Switch your primary version to KJV to enable this feature.");
+		}
+		strongsSetting.setDesc(descFrag);
+
+		strongsSetting.addToggle((toggle) => {
+			toggle
+				.setValue(this.plugin.settings.showStrongsNumbers && isKjvCompatible)
+				.setDisabled(!isKjvCompatible)
+				.onChange((value) => {
+					if (!isKjvCompatible) return;
+					this.plugin.settings.showStrongsNumbers = value;
+					this.plugin.saveSettings();
+				});
+		});
+
+		if (!isKjvCompatible) {
+			strongsSetting.settingEl.style.opacity = "0.55";
+		}
+
+		container.createEl("hr", { cls: "bible-settings-inner-divider" });
+		container.createEl("h3", { text: "Developer & Diagnostics", cls: "bible-settings-subheading" });
+
 		new Setting(container)
 			.setName("Enable developer logging")
 			.setDesc("Creates a bible-sidecar-plus-debug.log file inside the plugin folder to help diagnose HTML parsing issues.")
@@ -248,8 +393,6 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 						this.plugin.saveSettings();
 					});
 			});
-
-		container.createEl("hr", { cls: "bible-settings-divider" });
 
 		new Setting(container)
 			.setName("Reset to default settings")
@@ -269,7 +412,9 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 			});
 	}
 
-	renderOfflineTab(container: HTMLElement) {
+	renderTranslationsApiTab(container: HTMLElement) {
+		container.createEl("h3", { text: "Offline Database Manager", cls: "bible-settings-subheading" });
+
 		const currentVersion = this.plugin.settings.bibleVersion;
 		const downloaderSetting = new Setting(container)
 			.setName(`Offline Manager: ${currentVersion}`)
@@ -364,6 +509,239 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 				});
 			}
 		});
+
+		container.createEl("hr", { cls: "bible-settings-inner-divider" });
+		container.createEl("h3", { text: "Online APIs Configuration (Premium Formatting)", cls: "bible-settings-subheading" });
+
+		container.createEl("h4", { text: "ESV API Configuration (Crossway)", cls: "bible-settings-subheading" });
+		let esvApiKeySetting: Setting;
+
+		new Setting(container)
+			.setName("Use ESV API")
+			.setDesc("Enable the ESV API service to fetch the ESV translation directly from Crossway with premium stanzas and red stanzas.")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.esvApiEnabled)
+					.onChange((value) => {
+						this.plugin.settings.esvApiEnabled = value;
+						this.plugin.saveSettings();
+						esvApiKeySetting.settingEl.style.display = value ? "flex" : "none";
+					});
+			});
+
+		const esvDescFrag = document.createDocumentFragment();
+		esvDescFrag.appendChild(document.createTextNode("Your non-commercial API key from "));
+		const esvLink = esvDescFrag.appendChild(document.createElement("a"));
+		esvLink.href = "https://api.esv.org/";
+		esvLink.setText("api.esv.org");
+		esvLink.target = "_blank";
+
+		esvApiKeySetting = new Setting(container)
+			.setName("ESV API Key")
+			.setDesc(esvDescFrag)
+			.addText((text) => {
+				text
+					.setPlaceholder("Enter your ESV API key")
+					.setValue(this.plugin.settings.esvApiKey)
+					.onChange((value) => {
+						this.plugin.settings.esvApiKey = value;
+						this.esvStatus = "none";
+						this.plugin.saveSettings();
+					});
+			})
+			.addButton((btn) => {
+				btn.setButtonText("Test Connection")
+					.setCta()
+					.setTooltip("Verify key credentials with Crossway server")
+					.onClick(async () => {
+						if (!this.plugin.settings.esvApiKey.trim()) {
+							this.esvStatus = "error";
+							this.esvError = "API key cannot be empty";
+							this.display();
+							return;
+						}
+						this.esvStatus = "validating";
+						this.display();
+						try {
+							const success = await this.plugin.scriptureProvider.testConnection(
+								"esv",
+								this.plugin.settings.esvApiKey
+							);
+							if (success) {
+								this.esvStatus = "success";
+								new Notice("ESV API Connected successfully!");
+							} else {
+								this.esvStatus = "error";
+								this.esvError = "Invalid API key or network error";
+							}
+						} catch (err: any) {
+							this.esvStatus = "error";
+							this.esvError = err.message || String(err);
+						}
+						this.display();
+					});
+			});
+
+		if (this.esvStatus !== "none") {
+			const badge = document.createElement("span");
+			badge.className = `bible-settings-badge ${this.esvStatus}`;
+			badge.setText(this.esvStatus === "validating" ? "Validating" : this.esvStatus === "success" ? "Connected" : "Error");
+			esvApiKeySetting.nameEl.appendChild(document.createTextNode(" "));
+			esvApiKeySetting.nameEl.appendChild(badge);
+
+			if (this.esvStatus === "error" && this.esvError) {
+				const errorEl = container.createDiv({ cls: "strongs-error", text: `Error: ${this.esvError}` });
+				errorEl.style.marginTop = "4px";
+			}
+		}
+
+		esvApiKeySetting.settingEl.style.display = this.plugin.settings.esvApiEnabled ? "flex" : "none";
+
+		container.createEl("hr", { cls: "bible-settings-inner-divider" });
+
+		container.createEl("h4", { text: "API.Bible Configuration (Premium Formatting)", cls: "bible-settings-subheading" });
+		let apiKeySetting: Setting;
+		let apiVersionSetting: Setting;
+
+		new Setting(container)
+			.setName("Use API.Bible")
+			.setDesc("Enable the API.Bible service to unlock premium formatting (poetry, paragraphs, etc.). Falls back to bolls.life if the key is invalid or missing.")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.apiBibleEnabled)
+					.onChange((value) => {
+						this.plugin.settings.apiBibleEnabled = value;
+						this.plugin.saveSettings();
+						
+						const show = value ? "flex" : "none";
+						apiKeySetting.settingEl.style.display = show;
+						apiVersionSetting.settingEl.style.display = show;
+					});
+			});
+
+		const apiBibleDescFrag = document.createDocumentFragment();
+		apiBibleDescFrag.appendChild(document.createTextNode("Your non-commercial API key from "));
+		const apiBibleLink = apiBibleDescFrag.appendChild(document.createElement("a"));
+		apiBibleLink.href = "https://scripture.api.bible/";
+		apiBibleLink.setText("scripture.api.bible");
+		apiBibleLink.target = "_blank";
+
+		apiKeySetting = new Setting(container)
+			.setName("API.Bible Key")
+			.setDesc(apiBibleDescFrag)
+			.addText((text) => {
+				text
+					.setPlaceholder("Enter your API key")
+					.setValue(this.plugin.settings.apiBibleKey)
+					.onChange((value) => {
+						this.plugin.settings.apiBibleKey = value;
+						this.plugin.apiBiblesCache = null; // Clear cache on key change
+						this.apiBibleStatus = "none";
+						this.plugin.saveSettings();
+					});
+			})
+			.addButton((btn) => {
+				btn.setButtonText("Test Connection")
+					.setCta()
+					.setTooltip("Verify key credentials and fetch translations list")
+					.onClick(async () => {
+						if (!this.plugin.settings.apiBibleKey.trim()) {
+							this.apiBibleStatus = "error";
+							this.apiBibleError = "API key cannot be empty";
+							this.display();
+							return;
+						}
+						this.apiBibleStatus = "validating";
+						this.plugin.apiBiblesCache = null;
+						this.display();
+						try {
+							const data = await this.plugin.scriptureProvider.fetchBibles(
+								this.plugin.settings.apiBibleKey
+							);
+							this.apiBibleStatus = "success";
+							this.plugin.apiBiblesCache = data.map((b: any) => ({
+								id: b.id,
+								name: `${b.name} (${b.abbreviation})`
+							}));
+							new Notice("API.Bible Connected successfully!");
+						} catch (err: any) {
+							this.apiBibleStatus = "error";
+							this.apiBibleError = err.message || String(err);
+							this.plugin.apiBiblesCache = [{ id: "error", name: "Error loading translations" }];
+						}
+						this.display();
+					});
+			});
+
+		if (this.apiBibleStatus !== "none") {
+			const badge = document.createElement("span");
+			badge.className = `bible-settings-badge ${this.apiBibleStatus}`;
+			badge.setText(this.apiBibleStatus === "validating" ? "Validating" : this.apiBibleStatus === "success" ? "Connected" : "Error");
+			apiKeySetting.nameEl.appendChild(document.createTextNode(" "));
+			apiKeySetting.nameEl.appendChild(badge);
+
+			if (this.apiBibleStatus === "error" && this.apiBibleError) {
+				const errorEl = container.createDiv({ cls: "strongs-error", text: `Error: ${this.apiBibleError}` });
+				errorEl.style.marginTop = "4px";
+			}
+		}
+
+		const hasKey = this.plugin.settings.apiBibleKey.trim().length > 0;
+		if (this.plugin.settings.apiBibleEnabled && hasKey && !this.plugin.apiBiblesCache) {
+			this.plugin.apiBiblesCache = []; 
+			this.apiBibleStatus = "validating";
+			this.plugin.scriptureProvider.fetchBibles(this.plugin.settings.apiBibleKey.trim())
+				.then((data: any) => {
+					this.apiBibleStatus = "success";
+					this.plugin.apiBiblesCache = data.map((b: any) => ({
+						id: b.id,
+						name: `${b.name} (${b.abbreviation})`
+					}));
+					this.display();
+				})
+				.catch((err: any) => {
+					console.error("Error fetching API.Bible list:", err);
+					this.apiBibleStatus = "error";
+					this.apiBibleError = err.message || String(err);
+					this.plugin.apiBiblesCache = [{ id: "error", name: "Error loading translations" }];
+					this.display();
+				});
+		}
+
+		apiVersionSetting = new Setting(container)
+			.setName("API.Bible Version")
+			.setDesc("Choose your preferred Bible version");
+
+		if (this.plugin.settings.apiBibleEnabled && hasKey) {
+			if (this.plugin.apiBiblesCache && this.plugin.apiBiblesCache.length > 0) {
+				const isError = this.plugin.apiBiblesCache[0].id === "error";
+				if (isError) {
+					apiVersionSetting.setDesc("Failed to load versions. Please check your API key.");
+				} else {
+					apiVersionSetting.addDropdown((dropdown) => {
+						this.plugin.apiBiblesCache?.forEach((bible) => {
+							dropdown.addOption(bible.id, bible.name);
+						});
+						dropdown
+							.setValue(this.plugin.settings.apiBibleVersionId)
+							.onChange((value) => {
+								this.plugin.settings.apiBibleVersionId = value;
+								this.plugin.saveSettings();
+							});
+					});
+				}
+			} else if (this.plugin.apiBiblesCache && this.plugin.apiBiblesCache.length === 0) {
+				apiVersionSetting.setDesc("Fetching available Bible versions...");
+			} else {
+				apiVersionSetting.setDesc("Failed to load versions. Please check your API key.");
+			}
+		} else {
+			apiVersionSetting.setDesc("Enter a valid API.Bible Key to choose a version.");
+		}
+
+		const isApiEnabled = this.plugin.settings.apiBibleEnabled;
+		apiKeySetting.settingEl.style.display = isApiEnabled ? "flex" : "none";
+		apiVersionSetting.settingEl.style.display = isApiEnabled ? "flex" : "none";
 	}
 
 	renderCopyTab(container: HTMLElement) {
@@ -444,43 +822,20 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 					});
 			});
 
-		// Hide sub-settings initially if reference copying is off
 		const initialShow = this.plugin.settings.copyVerseReference ? "flex" : "none";
 		verseReferencePrefixSetting.settingEl.style.display = initialShow;
 		verseReferenceFormatSetting.settingEl.style.display = initialShow;
 		verseReferenceInternalLinkingSetting.settingEl.style.display = initialShow;
-
-		new Setting(container)
-			.setName("Hide link icon on Bible references")
-			.setDesc("Hides the default Obsidian external link arrow icon next to Bible reference links to keep notes clean.")
-			.addToggle((toggle) => {
-				toggle
-					.setValue(this.plugin.settings.hideLinkIcon)
-					.onChange((value) => {
-						this.plugin.settings.hideLinkIcon = value;
-						this.plugin.saveSettings();
-					});
-			});
-
-		new Setting(container)
-			.setName("Separate verses in sidecar view")
-			.setDesc("When enabled, each verse in the sidecar view is rendered on its own line. When disabled, verses flow as a continuous paragraph.")
-			.addToggle((toggle) => {
-				toggle
-					.setValue(this.plugin.settings.separateVersesSidecar)
-					.onChange((value) => {
-						this.plugin.settings.separateVersesSidecar = value;
-						this.plugin.saveSettings();
-					});
-			});
 	}
 
-	renderAutoExpandTab(container: HTMLElement) {
+	renderAutocompleteTab(container: HTMLElement) {
+		container.createEl("h3", { text: "Autocomplete Settings", cls: "bible-settings-subheading" });
+
 		const prefix = this.plugin.settings.autoExpandTriggerPrefix || "--";
 
 		new Setting(container)
 			.setName("Auto-expand Bible references")
-			.setDesc(`Enable typed Bible reference shortcuts such as \`${prefix}John 3:16 +p\` or \`${prefix}John 3:16 +q\` to expand references automatically.`)
+			.setDesc(`Enable typed Bible reference shortcuts such as \`${prefix}John 3:16\` to trigger autocomplete search and format options.`)
 			.addToggle((toggle) => {
 				toggle
 					.setValue(this.plugin.settings.autoExpandBibleReferences)
@@ -526,7 +881,56 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 					});
 			});
 
-		// Custom collapsible tabs or dividers for the flags (+p, +l, +q)
+		container.createEl("hr", { cls: "bible-settings-inner-divider" });
+		container.createEl("h3", { text: "IntelliSense UI Customization", cls: "bible-settings-subheading" });
+
+		new Setting(container)
+			.setName("Show Word Descriptor")
+			.setDesc("When enabled, the 1-word style descriptor (e.g. 'Link', 'Passage') is displayed next to the icon in the suggestions list.")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.showSuggestDescriptor !== false)
+					.onChange(async (value) => {
+						this.plugin.settings.showSuggestDescriptor = value;
+						await this.plugin.saveSettings();
+					});
+			});
+
+		const types = [
+			{ id: "Link", label: "Link style (default style)", keyIcon: "suggestIconLink", keyDesc: "suggestDescLink" },
+			{ id: "Passage", label: "Passage style (+p)", keyIcon: "suggestIconPassage", keyDesc: "suggestDescPassage" },
+			{ id: "List", label: "List style (+l)", keyIcon: "suggestIconList", keyDesc: "suggestDescList" },
+			{ id: "Quote", label: "Quote style (+q)", keyIcon: "suggestIconQuote", keyDesc: "suggestDescQuote" },
+			{ id: "Book", label: "Book suggestion", keyIcon: "suggestIconBook", keyDesc: "suggestDescBook" }
+		];
+
+		types.forEach(t => {
+			const sEl = new Setting(container)
+				.setName(`${t.id} Suggestion Item`)
+				.setDesc(`Configure icon and text descriptor label for the ${t.label} option`);
+
+			sEl.addText(text => {
+				text.setPlaceholder("Icon Emoji")
+					.setValue((this.plugin.settings as any)[t.keyIcon] || "")
+					.onChange(async (val) => {
+						(this.plugin.settings as any)[t.keyIcon] = val.trim();
+						await this.plugin.saveSettings();
+					});
+			});
+
+			sEl.addText(text => {
+				text.setPlaceholder("1-word Descriptor")
+					.setValue((this.plugin.settings as any)[t.keyDesc] || "")
+					.onChange(async (val) => {
+						(this.plugin.settings as any)[t.keyDesc] = val.trim();
+						await this.plugin.saveSettings();
+					});
+			});
+		});
+
+		container.createEl("hr", { cls: "bible-settings-inner-divider" });
+		container.createEl("h3", { text: "Expansion Formatting Templates", cls: "bible-settings-subheading" });
+
 		const flagsDetails = container.createEl("details", { 
 			cls: "bible-settings-details" 
 		});
@@ -536,7 +940,7 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 		flagsDetails.addEventListener("toggle", () => {
 			this.autoExpandDetailsOpen = flagsDetails.open;
 		});
-		flagsDetails.createEl("summary", { text: "Auto-Expand Options (+p, +l, +q)", cls: "bible-settings-summary" });
+		flagsDetails.createEl("summary", { text: "Custom Suffix Flags (+p, +l, +q)", cls: "bible-settings-summary" });
 		const flagsContent = flagsDetails.createDiv({ cls: "bible-settings-content" });
 
 		const addModeSettings = (
@@ -649,6 +1053,24 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 
 		// Live Formatting Preview Card
 		this.renderAutoExpandPreview(container);
+
+		container.createEl("hr", { cls: "bible-settings-inner-divider" });
+
+		// Cheatsheet Section
+		const featuresSection = container.createDiv({ cls: "bible-settings-features-box" });
+		featuresSection.createEl("h4", { text: "Autocomplete Features & Shortcuts Cheatsheet" });
+		
+		const ul = featuresSection.createEl("ul");
+		const li1 = ul.createEl("li");
+		li1.innerHTML = "<b>Tab & Enter Autocomplete:</b> Hitting either <code>Tab</code> or <code>Enter</code> will select the highlighted dropdown item and insert it atomically into the editor.";
+		const li2 = ul.createEl("li");
+		li2.innerHTML = "<b>Format Suffix Filtering:</b> Directly append <code>p</code>, <code>l</code>, or <code>q</code> at the end of the query (e.g., <code>--John 3:16p</code>) to instantly isolate that format choice. Typing <code>+</code> prefix is optional!";
+		const li3 = ul.createEl("li");
+		li3.innerHTML = "<b>Shorthand Context Links:</b> If the Sidecar panel is open, typing a relative verse or range (like <code>--v2</code> or <code>--2</code>) will output a clean shorthand hyperlink (e.g. <code>[v2](obsidian://...)</code>) to keep notes tidy.";
+		const li4 = ul.createEl("li");
+		li4.innerHTML = "<b>Trailing Colon (:) Helper:</b> Keeps suggestions active when you type a colon (e.g., <code>--Job 1:</code>) and displays the first few verses of the chapter.";
+		const li5 = ul.createEl("li");
+		li5.innerHTML = "<b>Trailing Dash (-) Range Helper:</b> Keeps suggestions active when you type a dash at the end of a verse (e.g., <code>--Job 1:2-</code>) and lists range recommendations starting from that verse.";
 	}
 
 	renderAutoExpandPreview(parentEl: HTMLElement) {
@@ -678,349 +1100,6 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 		previewText += compileAutoExpandOutput(mockVerses, "John", 3, "q", refLink, this.plugin.settings);
 
 		previewContent.setText(previewText);
-	}
-
-	renderStudyToolsTab(container: HTMLElement) {
-		let secondaryVersionSetting: Setting;
-
-		new Setting(container)
-			.setName("Parallel translation view")
-			.setDesc("Show a second Bible translation alongside the primary one. When the panel is narrow (< 480px), tabs replace the side-by-side layout.")
-			.addToggle((toggle) => {
-				toggle
-					.setValue(this.plugin.settings.parallelEnabled)
-					.onChange((value) => {
-						this.plugin.settings.parallelEnabled = value;
-						this.plugin.saveSettings();
-						secondaryVersionSetting.settingEl.style.display = value ? "flex" : "none";
-					});
-			});
-
-		// Dynamic Dropdown for Secondary Version
-		secondaryVersionSetting = new Setting(container)
-			.setName("Secondary Bible version")
-			.setDesc("Choose secondary Bible translation displayed in parallel view (Bolls.life only).")
-			.addDropdown((dropdown) => {
-				const currentLang = this.plugin.settings.bibleLanguage;
-				const languageAvailableVersions: Record<string, string[]> = {
-					en: ["YLT", "KJV", "NKJV", "WEB", "RSV", "CJB", "TS2009", "LXXE", "TLV", "LSB", "NASB", "ESV", "GNV", "DRB", "NIV2011", "NIV", "NLT", "NRSVCE", "NET", "NJB1985", "SPE", "LBP", "AMP", "MSG", "LSV", "BSB"],
-					de: ["MB", "ELB", "SCH", "LUT"],
-					fr: ["NBS"],
-					es: ["BTX3", "RV2004", "PDT", "NVI", "NTV", "LBLA"],
-					pt: ["ARA", "NTJud", "NVIPT", "OL", "NVT", "KJA", "VFL", "NAA", "CNBB", "NBV07", "ALM21", "ARC09"],
-					it: ["NR06", "VULG"],
-					nl: ["NLD", "DSV", "SVRJ", "HSV17"],
-					ru: ["JNT", "NRT", "SYNOD", "TNHR", "RBS2", "BTI"],
-					ar: ["SVD"],
-					in: ["TB"],
-					af: ["AFR53"]
-				};
-				const list = languageAvailableVersions[currentLang] || ["KJV"];
-				list.forEach((v) => {
-					dropdown.addOption(v, v);
-				});
-				dropdown
-					.setValue(this.plugin.settings.secondaryBibleVersion || "KJV")
-					.onChange((value) => {
-						this.plugin.settings.secondaryBibleVersion = value;
-						this.plugin.saveSettings();
-					});
-			});
-
-		secondaryVersionSetting.settingEl.style.display =
-			this.plugin.settings.parallelEnabled ? "flex" : "none";
-
-		new Setting(container)
-			.setName("Show cross-references")
-			.setDesc("Display superscript letter markers next to words in ESV and API.Bible chapters. Hover (desktop) or tap (mobile) to see related passages.")
-			.addToggle((toggle) => {
-				toggle
-					.setValue(this.plugin.settings.showCrossReferences)
-					.onChange((value) => {
-						this.plugin.settings.showCrossReferences = value;
-						this.plugin.saveSettings();
-					});
-			});
-
-		new Setting(container)
-			.setName("Color Jesus's words in red (Gospels only)")
-			.setDesc("Highlights all quoted text in the Gospels (Matthew, Mark, Luke, John) in red. Works for modern translations that use quotation marks (e.g. ESV, NIV, NLT, NASB).")
-			.addToggle((toggle) => {
-				toggle
-					.setValue(this.plugin.settings.gospelQuotesRed)
-					.onChange((value) => {
-						this.plugin.settings.gospelQuotesRed = value;
-						this.plugin.saveSettings();
-					});
-			});
-
-		// Strong's Numbers Toggle (with compatibility checks)
-		const isKjvCompatible = ["KJV", "YLT", "NKJV"].includes(
-			(this.plugin.settings.bibleVersion || "").toUpperCase()
-		);
-
-		const strongsSetting = new Setting(container)
-			.setName("Show Strong's concordance numbers");
-
-		const descFrag = document.createDocumentFragment();
-		if (isKjvCompatible) {
-			descFrag.appendChild(document.createTextNode("Underline words with Strong's IDs in KJV and other Bolls.life translations. Click any underlined word to look up its Hebrew or Greek definition."));
-		} else {
-			const warnText = descFrag.appendChild(document.createElement("strong"));
-			warnText.style.color = "var(--text-warning)";
-			warnText.setText("⚠️ Strong's numbers are only available for KJV and compatible Bolls.life translations. Switch your primary version to KJV to enable this feature.");
-		}
-		strongsSetting.setDesc(descFrag);
-
-		strongsSetting.addToggle((toggle) => {
-			toggle
-				.setValue(this.plugin.settings.showStrongsNumbers && isKjvCompatible)
-				.setDisabled(!isKjvCompatible)
-				.onChange((value) => {
-					if (!isKjvCompatible) return;
-					this.plugin.settings.showStrongsNumbers = value;
-					this.plugin.saveSettings();
-				});
-		});
-
-		if (!isKjvCompatible) {
-			strongsSetting.settingEl.style.opacity = "0.55";
-		}
-	}
-
-	renderApiKeysTab(container: HTMLElement) {
-		container.createEl("h4", { text: "ESV API Configuration (Crossway)", cls: "bible-settings-subheading" });
-		let esvApiKeySetting: Setting;
-
-		new Setting(container)
-			.setName("Use ESV API")
-			.setDesc("Enable the ESV API service to fetch the ESV translation directly from Crossway with premium stanzas and red stanzas.")
-			.addToggle((toggle) => {
-				toggle
-					.setValue(this.plugin.settings.esvApiEnabled)
-					.onChange((value) => {
-						this.plugin.settings.esvApiEnabled = value;
-						this.plugin.saveSettings();
-						esvApiKeySetting.settingEl.style.display = value ? "flex" : "none";
-					});
-			});
-
-		const esvDescFrag = document.createDocumentFragment();
-		esvDescFrag.appendChild(document.createTextNode("Your non-commercial API key from "));
-		const esvLink = esvDescFrag.appendChild(document.createElement("a"));
-		esvLink.href = "https://api.esv.org/";
-		esvLink.setText("api.esv.org");
-		esvLink.target = "_blank";
-
-		esvApiKeySetting = new Setting(container)
-			.setName("ESV API Key")
-			.setDesc(esvDescFrag)
-			.addText((text) => {
-				text
-					.setPlaceholder("Enter your ESV API key")
-					.setValue(this.plugin.settings.esvApiKey)
-					.onChange((value) => {
-						this.plugin.settings.esvApiKey = value;
-						this.esvStatus = "none";
-						this.plugin.saveSettings();
-					});
-			})
-			.addButton((btn) => {
-				btn.setButtonText("Test Connection")
-					.setCta()
-					.setTooltip("Verify key credentials with Crossway server")
-					.onClick(async () => {
-						if (!this.plugin.settings.esvApiKey.trim()) {
-							this.esvStatus = "error";
-							this.esvError = "API key cannot be empty";
-							this.display();
-							return;
-						}
-						this.esvStatus = "validating";
-						this.display();
-						try {
-							const success = await this.plugin.scriptureProvider.testConnection(
-								"esv",
-								this.plugin.settings.esvApiKey
-							);
-							if (success) {
-								this.esvStatus = "success";
-								new Notice("ESV API Connected successfully!");
-							} else {
-								this.esvStatus = "error";
-								this.esvError = "Invalid API key or network error";
-							}
-						} catch (err: any) {
-							this.esvStatus = "error";
-							this.esvError = err.message || String(err);
-						}
-						this.display();
-					});
-			});
-
-		// Render Connection Status Badge for ESV
-		if (this.esvStatus !== "none") {
-			const badge = document.createElement("span");
-			badge.className = `bible-settings-badge ${this.esvStatus}`;
-			badge.setText(this.esvStatus === "validating" ? "Validating" : this.esvStatus === "success" ? "Connected" : "Error");
-			esvApiKeySetting.nameEl.appendChild(document.createTextNode(" "));
-			esvApiKeySetting.nameEl.appendChild(badge);
-
-			if (this.esvStatus === "error" && this.esvError) {
-				const errorEl = container.createDiv({ cls: "strongs-error", text: `Error: ${this.esvError}` });
-				errorEl.style.marginTop = "4px";
-			}
-		}
-
-		esvApiKeySetting.settingEl.style.display = this.plugin.settings.esvApiEnabled ? "flex" : "none";
-
-		container.createEl("hr", { cls: "bible-settings-inner-divider" });
-
-		container.createEl("h4", { text: "API.Bible Configuration (Premium Formatting)", cls: "bible-settings-subheading" });
-		let apiKeySetting: Setting;
-		let apiVersionSetting: Setting;
-
-		new Setting(container)
-			.setName("Use API.Bible")
-			.setDesc("Enable the API.Bible service to unlock premium formatting (poetry, paragraphs, etc.). Falls back to bolls.life if the key is invalid or missing.")
-			.addToggle((toggle) => {
-				toggle
-					.setValue(this.plugin.settings.apiBibleEnabled)
-					.onChange((value) => {
-						this.plugin.settings.apiBibleEnabled = value;
-						this.plugin.saveSettings();
-						
-						const show = value ? "flex" : "none";
-						apiKeySetting.settingEl.style.display = show;
-						apiVersionSetting.settingEl.style.display = show;
-					});
-			});
-
-		const apiBibleDescFrag = document.createDocumentFragment();
-		apiBibleDescFrag.appendChild(document.createTextNode("Your non-commercial API key from "));
-		const apiBibleLink = apiBibleDescFrag.appendChild(document.createElement("a"));
-		apiBibleLink.href = "https://scripture.api.bible/";
-		apiBibleLink.setText("scripture.api.bible");
-		apiBibleLink.target = "_blank";
-
-		apiKeySetting = new Setting(container)
-			.setName("API.Bible Key")
-			.setDesc(apiBibleDescFrag)
-			.addText((text) => {
-				text
-					.setPlaceholder("Enter your API key")
-					.setValue(this.plugin.settings.apiBibleKey)
-					.onChange((value) => {
-						this.plugin.settings.apiBibleKey = value;
-						this.plugin.apiBiblesCache = null; // Clear cache on key change
-						this.apiBibleStatus = "none";
-						this.plugin.saveSettings();
-					});
-			})
-			.addButton((btn) => {
-				btn.setButtonText("Test Connection")
-					.setCta()
-					.setTooltip("Verify key credentials and fetch translations list")
-					.onClick(async () => {
-						if (!this.plugin.settings.apiBibleKey.trim()) {
-							this.apiBibleStatus = "error";
-							this.apiBibleError = "API key cannot be empty";
-							this.display();
-							return;
-						}
-						this.apiBibleStatus = "validating";
-						this.plugin.apiBiblesCache = null;
-						this.display();
-						try {
-							const data = await this.plugin.scriptureProvider.fetchBibles(
-								this.plugin.settings.apiBibleKey
-							);
-							this.apiBibleStatus = "success";
-							this.plugin.apiBiblesCache = data.map((b: any) => ({
-								id: b.id,
-								name: `${b.name} (${b.abbreviation})`
-							}));
-							new Notice("API.Bible Connected successfully!");
-						} catch (err: any) {
-							this.apiBibleStatus = "error";
-							this.apiBibleError = err.message || String(err);
-							this.plugin.apiBiblesCache = [{ id: "error", name: "Error loading translations" }];
-						}
-						this.display();
-					});
-			});
-
-		// Render Connection Status Badge for API.Bible
-		if (this.apiBibleStatus !== "none") {
-			const badge = document.createElement("span");
-			badge.className = `bible-settings-badge ${this.apiBibleStatus}`;
-			badge.setText(this.apiBibleStatus === "validating" ? "Validating" : this.apiBibleStatus === "success" ? "Connected" : "Error");
-			apiKeySetting.nameEl.appendChild(document.createTextNode(" "));
-			apiKeySetting.nameEl.appendChild(badge);
-
-			if (this.apiBibleStatus === "error" && this.apiBibleError) {
-				const errorEl = container.createDiv({ cls: "strongs-error", text: `Error: ${this.apiBibleError}` });
-				errorEl.style.marginTop = "4px";
-			}
-		}
-
-		// Trigger background fetch if enabled, has key, and cache is null
-		const hasKey = this.plugin.settings.apiBibleKey.trim().length > 0;
-		if (this.plugin.settings.apiBibleEnabled && hasKey && !this.plugin.apiBiblesCache) {
-			this.plugin.apiBiblesCache = []; // Set to empty to avoid duplicate concurrent fetches
-			this.apiBibleStatus = "validating";
-			this.plugin.scriptureProvider.fetchBibles(this.plugin.settings.apiBibleKey.trim())
-				.then((data: any) => {
-					this.apiBibleStatus = "success";
-					this.plugin.apiBiblesCache = data.map((b: any) => ({
-						id: b.id,
-						name: `${b.name} (${b.abbreviation})`
-					}));
-					this.display();
-				})
-				.catch((err: any) => {
-					console.error("Error fetching API.Bible list:", err);
-					this.apiBibleStatus = "error";
-					this.apiBibleError = err.message || String(err);
-					this.plugin.apiBiblesCache = [{ id: "error", name: "Error loading translations" }];
-					this.display();
-				});
-		}
-
-		apiVersionSetting = new Setting(container)
-			.setName("API.Bible Version")
-			.setDesc("Choose your preferred Bible version");
-
-		if (this.plugin.settings.apiBibleEnabled && hasKey) {
-			if (this.plugin.apiBiblesCache && this.plugin.apiBiblesCache.length > 0) {
-				const isError = this.plugin.apiBiblesCache[0].id === "error";
-				if (isError) {
-					apiVersionSetting.setDesc("Failed to load versions. Please check your API key.");
-				} else {
-					apiVersionSetting.addDropdown((dropdown) => {
-						this.plugin.apiBiblesCache?.forEach((bible) => {
-							dropdown.addOption(bible.id, bible.name);
-						});
-						dropdown
-							.setValue(this.plugin.settings.apiBibleVersionId)
-							.onChange((value) => {
-								this.plugin.settings.apiBibleVersionId = value;
-								this.plugin.saveSettings();
-							});
-					});
-				}
-			} else if (this.plugin.apiBiblesCache && this.plugin.apiBiblesCache.length === 0) {
-				apiVersionSetting.setDesc("Fetching available Bible versions...");
-			} else {
-				apiVersionSetting.setDesc("Failed to load versions. Please check your API key.");
-			}
-		} else {
-			apiVersionSetting.setDesc("Enter a valid API.Bible Key to choose a version.");
-		}
-
-		const isApiEnabled = this.plugin.settings.apiBibleEnabled;
-		apiKeySetting.settingEl.style.display = isApiEnabled ? "flex" : "none";
-		apiVersionSetting.settingEl.style.display = isApiEnabled ? "flex" : "none";
 	}
 
 	updateActiveViews() {
