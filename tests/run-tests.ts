@@ -32,10 +32,11 @@ import {
     cleanHtmlKeepRedSpans,
     highlightGospelQuotes,
     stripLeadingVerseNumbers,
-    parseHtmlToVerses
-} from "./utils";
-import { OfflineCacheStore, FileAdapter } from "./OfflineCacheStore";
-import { BibleEditorSuggest } from "./BibleEditorSuggest";
+    parseHtmlToVerses,
+    stripLeadingPlainNumbers
+} from "../src/utils";
+import { OfflineCacheStore, FileAdapter } from "../src/OfflineCacheStore";
+import { BibleEditorSuggest } from "../src/BibleEditorSuggest";
 
 // Colors for beautiful CLI output
 const colors = {
@@ -825,6 +826,15 @@ async function runTestSuite() {
     assert(passageCallout.startsWith("> [!quote] [[Genesis]] [1:1]"), "Callout format starts with blockquote header");
     assert(passageCallout.includes("> In the beginning..."), "Callout format prefixes lines with blockquote marker");
 
+    const passageCalloutWithVersion = compileFormattedPassage("In the beginning...", "[[Genesis]] [1:1](obsidian://...)", {
+        copyFormat: "callout",
+        copyVerseReference: true,
+        verseReferenceStyle: "> ",
+        showVersionIndicator: true,
+        bibleVersion: "ESV"
+    });
+    assert(passageCalloutWithVersion.startsWith("> [!quote] [[Genesis]] [1:1](obsidian://...) (ESV)"), "Callout copy includes version indicator in title");
+
     // Test compileDragText
     const rawSupText = convertToSuperscript("1");
     const preLinkedText = `[${rawSupText}](obsidian://bible?book=Genesis&chapter=1&verse=1) In the beginning...`;
@@ -949,6 +959,14 @@ async function runTestSuite() {
     assert(!filteredList.includes(mockChild), "Child element is filtered out");
     assert(!filteredList.includes(mockGrandchild), "Grandchild element is filtered out");
 
+    // Test: stripLeadingPlainNumbers
+    assert(stripLeadingPlainNumbers("4:1   “Hear this word...", 1) === "“Hear this word...", "Strips leading chapter:verse prefix");
+    assert(stripLeadingPlainNumbers("2   The Lord GOD...", 2) === "The Lord GOD...", "Strips leading plain verse number");
+    assert(stripLeadingPlainNumbers("<span class=\"woc\">2 </span>The Lord GOD...", 2) === "<span class=\"woc\"></span>The Lord GOD...", "Strips leading plain verse number inside HTML tags");
+    assert(stripLeadingPlainNumbers("<p>&nbsp; 2 &nbsp;The Lord GOD...", 2) === "<p>The Lord GOD...", "Strips leading plain verse number with &nbsp; spaces inside custom paragraph tags");
+    assert(stripLeadingPlainNumbers("<p><span class=\"indent\">4:1 </span>“Hear this word...</p>", 1) === "<p><span class=\"indent\"></span>“Hear this word...</p>", "Strips leading chapter:verse prefix inside complex nested tags");
+    assert(stripLeadingPlainNumbers("70 years later...", 12) === "70 years later...", "Does not strip unrelated numbers at the start");
+
     // ----------------------------------------------------
     // TEST SECTION 22: BIBLE EDITOR SUGGEST (INTELLISENSE)
     // ----------------------------------------------------
@@ -1035,6 +1053,13 @@ async function runTestSuite() {
 
     const suggestionsNoPlusQ = suggest.getSuggestions({ query: "16q" } as any);
     assert(suggestionsNoPlusQ.length === 1 && suggestionsNoPlusQ[0].suffix === "q", "Filters to Quote with optional + suffix '16q'");
+
+    // Test getSuggestions - Whole Chapter sentinel limit (300)
+    const suggestionsWholeChapter = suggest.getSuggestions({ query: "John 3" } as any);
+    assert(suggestionsWholeChapter.length > 0, "getSuggestions returns suggestions for whole chapter");
+    const wholeChapterOption = suggestionsWholeChapter.find(s => s.suffix === "passage");
+    assert(wholeChapterOption !== undefined, "Passage option exists for whole chapter");
+    assert(wholeChapterOption?.endVerse === 300, "Whole chapter suggestions have endVerse set to 300 sentinel limit");
 
     console.log();
 }

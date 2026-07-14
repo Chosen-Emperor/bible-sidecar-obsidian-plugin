@@ -135,6 +135,8 @@ export function compileFormattedPassage(
 		copyFormat?: string;
 		copyVerseReference?: boolean;
 		verseReferenceStyle?: string;
+		showVersionIndicator?: boolean;
+		bibleVersion?: string;
 	}
 ): string {
 	let finalText = scriptureText;
@@ -143,7 +145,11 @@ export function compileFormattedPassage(
 	const verseReferenceStyle = settings.verseReferenceStyle || "> ";
 
 	if (copyFormat === "callout") {
-		finalText = `[!quote] ${referenceLink}\n${finalText}`;
+		let calloutTitle = referenceLink;
+		if (settings.showVersionIndicator && settings.bibleVersion) {
+			calloutTitle = `${calloutTitle} (${settings.bibleVersion})`;
+		}
+		finalText = `[!quote] ${calloutTitle}\n${finalText}`;
 		finalText = finalText
 			.split("\n")
 			.map((line) => (line.trim() === "" ? ">" : `> ${line}`))
@@ -350,6 +356,8 @@ export interface AutoExpandSettings {
 	autoExpandCalloutType_q?: string;
 	autoExpandCalloutTitle_q?: string;
 	copyFormat?: string;
+	showVersionIndicator?: boolean;
+	bibleVersion?: string;
 }
 
 export function compileAutoExpandOutput(
@@ -426,7 +434,14 @@ export function compileAutoExpandOutput(
 		                      settings.autoExpandCalloutTitle_q;
 
 		// Replace {{reference}} with the active markdown link!
-		const calloutTitle = (titleTemplate || "").replace("{{reference}}", referenceText);
+		let calloutTitle = (titleTemplate || "").replace("{{reference}}", referenceText);
+		if (settings.showVersionIndicator && settings.bibleVersion) {
+			if (calloutTitle.includes("{{version}}")) {
+				calloutTitle = calloutTitle.replace("{{version}}", settings.bibleVersion);
+			} else {
+				calloutTitle = `${calloutTitle} (${settings.bibleVersion})`;
+			}
+		}
 
 		finalOutput = `[!${calloutType}] ${calloutTitle}\n${finalOutput}`;
 
@@ -976,6 +991,19 @@ export function stripLeadingVerseNumbers(text: string): string {
 	return clean;
 }
 
+export function stripLeadingPlainNumbers(text: string, verseVal: number): string {
+	let clean = text.trim();
+	// Match optional leading HTML tags, followed by optional spaces/nbsp, followed by either "chapter:verse" or "verse" plain text numbers
+	const regex = new RegExp(`^((?:<[^>]*>)*)(?:&nbsp;|\\s)*(?:\\d+:${verseVal}|${verseVal})\\b(?:&nbsp;|\\s)*`, "i");
+	const match = clean.match(regex);
+	if (match) {
+		const len = match[0].length;
+		const prefix = match[1]; // preserve the HTML tags
+		clean = prefix + clean.substring(len).trim();
+	}
+	return clean;
+}
+
 export function parseHtmlToVerses(
 	html: string,
 	isEsv: boolean,
@@ -1010,7 +1038,7 @@ export function parseHtmlToVerses(
 				} else {
 					content = content.trim();
 				}
-				results.push({ verse: verseNum, text: content });
+				results.push({ verse: verseNum, text: stripLeadingPlainNumbers(content, verseNum) });
 			}
 		} else {
 			const regex = /<span class="v" data-number="(\d+)"[^>]*>[\d\s]*<\/span>/gi;
@@ -1020,7 +1048,7 @@ export function parseHtmlToVerses(
 				const matchIndex = match.index || 0;
 				const verseNum = parseInt(match[1]);
 				if (verseNum === 0) continue;
-
+ 
 				const nextIndex = matches[i + 1] ? matches[i + 1].index : html.length;
 				let content = html.substring(matchIndex + match[0].length, nextIndex);
 				if (!keepHtml) {
@@ -1028,19 +1056,19 @@ export function parseHtmlToVerses(
 				} else {
 					content = content.trim();
 				}
-				results.push({ verse: verseNum, text: content });
+				results.push({ verse: verseNum, text: stripLeadingPlainNumbers(content, verseNum) });
 			}
 		}
 		return results;
 	}
-
+ 
 	const parser = new DOMParser();
 	const doc = parser.parseFromString(html, "text/html");
 	doc.querySelectorAll(".extra_text, .audio, .copyright, .mp3link").forEach(el => el.remove());
-
-	const markers = Array.from(doc.querySelectorAll(isEsv ? "b.verse-num, b.chapter-num, span.chapter-num" : "span.v"));
+ 
+	const markers = Array.from(doc.querySelectorAll(isEsv ? ".verse-num, .chapter-num" : "span.v"));
 	const results: { verse: number; text: string }[] = [];
-
+ 
 	for (let i = 0; i < markers.length; i++) {
 		const currentMarker = markers[i];
 		let verseNum = 0;
@@ -1059,9 +1087,9 @@ export function parseHtmlToVerses(
 		} else {
 			verseNum = parseInt(currentMarker.getAttribute("data-number") || currentMarker.textContent || "0");
 		}
-
+ 
 		if (verseNum === 0) continue;
-
+ 
 		const nextMarker = markers[i + 1];
 		const range = doc.createRange();
 		range.setStartAfter(currentMarker);
@@ -1074,7 +1102,7 @@ export function parseHtmlToVerses(
 			}
 			range.setEndAfter(endNode);
 		}
-
+ 
 		const fragment = range.cloneContents();
 		let text = "";
 		if (keepHtml) {
@@ -1086,9 +1114,9 @@ export function parseHtmlToVerses(
 			tempDiv.appendChild(fragment);
 			text = cleanHtmlKeepRedSpans(tempDiv);
 		}
-
-		results.push({ verse: verseNum, text });
+ 
+		results.push({ verse: verseNum, text: stripLeadingPlainNumbers(text, verseNum) });
 	}
-
+ 
 	return results;
 }

@@ -5,7 +5,7 @@ import {
     compileCopyMessage,
     compileAutoExpandOutput,
     highlightGospelQuotes
-} from "./utils";
+} from "../src/utils";
 
 // Colors for beautiful CLI output
 const colors = {

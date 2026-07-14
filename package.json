@@ -6,8 +6,8 @@
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-		"test": "node -e \"require('esbuild').buildSync({ entryPoints: ['run-tests.ts'], outfile: 'run-tests.tmp.js', bundle: true, platform: 'node', external: ['obsidian'] }); require('./run-tests.tmp.js'); require('fs').unlinkSync('./run-tests.tmp.js');\"",
-		"test:api": "node -e \"require('esbuild').buildSync({ entryPoints: ['run-api-tests.ts'], outfile: 'run-api-tests.tmp.js', bundle: true, platform: 'node', external: ['obsidian'] }); require('./run-api-tests.tmp.js'); require('fs').unlinkSync('./run-api-tests.tmp.js');\"",
+		"test": "node -e \"require('esbuild').buildSync({ entryPoints: ['tests/run-tests.ts'], outfile: 'run-tests.tmp.js', bundle: true, platform: 'node', external: ['obsidian'] }); require('./run-tests.tmp.js'); require('fs').unlinkSync('./run-tests.tmp.js');\"",
+		"test:api": "node -e \"require('esbuild').buildSync({ entryPoints: ['tests/run-api-tests.ts'], outfile: 'run-api-tests.tmp.js', bundle: true, platform: 'node', external: ['obsidian'] }); require('./run-api-tests.tmp.js'); require('fs').unlinkSync('./run-api-tests.tmp.js');\"",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
 		"release": "node publish-release.mjs"
 	},

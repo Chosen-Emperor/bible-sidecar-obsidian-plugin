@@ -1,4 +1,4 @@
-import { BibleView, BibleViewType } from "BibleView";
+import { BibleView, BibleViewType } from "./BibleView";
 import { BibleSidecarSettingsTab } from "./settings";
 import { Plugin, WorkspaceLeaf, Editor, Notice, requestUrl, SuggestModal, App, MarkdownView } from "obsidian";
 import { ScriptureProvider, ObsidianScriptureProvider } from "./ScriptureProvider";
@@ -25,7 +25,8 @@ import {
 	compileReferenceLink,
 	compileFormattedPassage,
 	formatScripturePassage,
-	parseHtmlToVerses
+	parseHtmlToVerses,
+	stripLeadingPlainNumbers
 } from "./utils";
 
 interface BibleSidecarSettings {
@@ -81,6 +82,7 @@ interface BibleSidecarSettings {
 	suggestIconBook: string;
 	suggestDescBook: string;
 	showSuggestDescriptor: boolean;
+	showVersionIndicator: boolean;
 }
 
 export const DEFAULT_SETTINGS: Partial<BibleSidecarSettings> = {
@@ -136,6 +138,7 @@ export const DEFAULT_SETTINGS: Partial<BibleSidecarSettings> = {
 	secondaryBibleVersion: "KJV",
 	showCrossReferences: false,
 	showStrongsNumbers: false,
+	showVersionIndicator: true,
 };
 
 const LANGUAGE_DEFAULT_VERSIONS: Record<string, string> = {
@@ -562,7 +565,7 @@ export default class BibleSidecarPlugin extends Plugin {
 						const parsedVerses = parseHtmlToVerses(cachedChapter.html, cachedChapter.isEsvApi, false);
 						parsedVerses.forEach((v) => {
 							if (v.verse >= startVerse && v.verse <= lastVerse) {
-								const cleanText = v.text.trim().replace(/\n+/g, " ").replace(/^\d+:\d+\s*/, "");
+								const cleanText = stripLeadingPlainNumbers(v.text.trim().replace(/\n+/g, " "), v.verse);
 								versesList.push({ verse: v.verse, text: cleanText });
 							}
 						});
@@ -571,7 +574,7 @@ export default class BibleSidecarPlugin extends Plugin {
 						for (const verse of cachedChapter) {
 							const vNum = parseInt(verse.verse);
 							if (vNum >= startVerse && vNum <= lastVerse) {
-								const cleanText = verse.text.replace(/<[^>]*>?/gm, '').replace(/^\d+:\d+\s*/, "").trim();
+								const cleanText = stripLeadingPlainNumbers(verse.text.replace(/<[^>]*>?/gm, ''), vNum).trim();
 								versesList.push({ verse: vNum, text: cleanText });
 							}
 						}
@@ -590,7 +593,7 @@ export default class BibleSidecarPlugin extends Plugin {
 					for (const verse of chapterRes.json) {
 						const vNum = parseInt(verse.verse);
 						if (vNum >= startVerse && vNum <= lastVerse) {
-							const cleanText = verse.text.replace(/<[^>]*>?/gm, '').replace(/^\d+:\d+\s*/, "").trim();
+							const cleanText = stripLeadingPlainNumbers(verse.text.replace(/<[^>]*>?/gm, ''), vNum).trim();
 							versesList.push({ verse: vNum, text: cleanText });
 						}
 					}
@@ -630,7 +633,7 @@ function parseQuickReference(query: string): ParsedReference | null {
 	if (chapterMatch) {
 		const book = chapterMatch[1].trim();
 		const chapter = parseInt(chapterMatch[2]);
-		return { book, chapter, startVerse: 1, endVerse: 150, isValid: true };
+		return { book, chapter, startVerse: 1, endVerse: 300, isValid: true };
 	}
 
 	return null;
@@ -650,6 +653,7 @@ class QuickReferenceModal extends SuggestModal<ReferenceActionSuggestion> {
 	plugin: BibleSidecarPlugin;
 	editor?: Editor;
 	formatOverride?: "p" | "l" | "q";
+	private isChoosing = false;
 
 	constructor(app: App, plugin: BibleSidecarPlugin, editor?: Editor, formatOverride?: "p" | "l" | "q") {
 		super(app);
@@ -665,7 +669,7 @@ class QuickReferenceModal extends SuggestModal<ReferenceActionSuggestion> {
 			return [];
 		}
 
-		const refLabel = parsed.startVerse === 1 && parsed.endVerse === 150
+		const refLabel = parsed.startVerse === 1 && parsed.endVerse === 300
 			? `${parsed.book} ${parsed.chapter}`
 			: `${parsed.book} ${parsed.chapter}:${parsed.startVerse}${parsed.endVerse !== parsed.startVerse ? "-" + parsed.endVerse : ""}`;
 
@@ -742,6 +746,9 @@ class QuickReferenceModal extends SuggestModal<ReferenceActionSuggestion> {
 	}
 
 	async onChooseSuggestion(suggestion: ReferenceActionSuggestion, evt: MouseEvent | KeyboardEvent): Promise<void> {
+		if (this.isChoosing) return;
+		this.isChoosing = true;
+
 		const { action, book, chapter, startVerse, endVerse, referenceLabel } = suggestion;
 
 		const activeLeaf = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -752,8 +759,8 @@ class QuickReferenceModal extends SuggestModal<ReferenceActionSuggestion> {
 			setTimeout(async () => {
 				const view = (this.plugin as any).view;
 				if (view && typeof view.navigateToPassage === "function") {
-					const endV = (startVerse === 1 && endVerse === 150) ? undefined : endVerse;
-					const startV = (startVerse === 1 && endVerse === 150) ? 1 : startVerse;
+					const endV = (startVerse === 1 && endVerse === 300) ? undefined : endVerse;
+					const startV = (startVerse === 1 && endVerse === 300) ? 1 : startVerse;
 					await view.navigateToPassage(book, chapter, startV, endV);
 				}
 			}, 200);
@@ -769,10 +776,10 @@ class QuickReferenceModal extends SuggestModal<ReferenceActionSuggestion> {
 			}
 		} else if (action === "insert_link") {
 			if (currentEditor) {
-				const rangeStr = (startVerse === 1 && endVerse === 150)
+				const rangeStr = (startVerse === 1 && endVerse === 300)
 					? ""
 					: (startVerse === endVerse ? startVerse.toString() : `${startVerse}-${endVerse}`);
-				const verseVal = (startVerse === 1 && endVerse === 150)
+				const verseVal = (startVerse === 1 && endVerse === 300)
 					? "1"
 					: expandRange(startVerse.toString(), endVerse?.toString());
 				
@@ -798,7 +805,7 @@ class QuickReferenceModal extends SuggestModal<ReferenceActionSuggestion> {
 						const isPremium = isEsvApi || isApiBible;
 						const compileSettings = isPremium ? { ...this.plugin.settings, gospelQuotesRed: false } : this.plugin.settings;
 						
-						const rangeStr = (startVerse === 1 && endVerse === 150)
+						const rangeStr = (startVerse === 1 && endVerse === 300)
 							? ""
 							: (startVerse === endVerse ? startVerse.toString() : `${startVerse}-${endVerse}`);
 						const vList = res.versesList.map(v => v.verse).join(",");

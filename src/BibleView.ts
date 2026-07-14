@@ -42,6 +42,7 @@ interface BibleSidecarSettings {
 	showCrossReferences: boolean;
 	showStrongsNumbers: boolean;
 	autoExpandTriggerPrefix: string;
+	showVersionIndicator: boolean;
 }
 
 const DEFAULT_SETTINGS: Partial<BibleSidecarSettings> = {
@@ -83,6 +84,7 @@ const DEFAULT_SETTINGS: Partial<BibleSidecarSettings> = {
 	showCrossReferences: false,
 	showStrongsNumbers: false,
 	autoExpandTriggerPrefix: "--",
+	showVersionIndicator: true,
 };
 
 export class BibleView extends ItemView {

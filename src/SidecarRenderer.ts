@@ -18,6 +18,7 @@ import {
 	extractCrossReferences,
 	parseHtmlToVerses,
 	stripLeadingVerseNumbers,
+	stripLeadingPlainNumbers,
 	getSelectionHtmlPreservingRedSpans,
 	cleanHtmlKeepRedSpans,
 	isNodeInsideRedSpan,
@@ -405,6 +406,9 @@ export class SidecarRenderer {
 			
 			const titleEl = header.createEl("div", { cls: "bible-header-title" });
 			titleEl.createEl("span", { text: "SELECT CHAPTER", cls: "bible-header-subtitle" });
+			if (this.settings.showVersionIndicator) {
+				titleEl.createEl("span", { text: this.settings.bibleVersion, cls: "bible-header-version-badge" });
+			}
 			const bookDisplayName = this.settings.abbreviateBookNames
 				? (BIBLE_BOOK_IDS[book.bookid - 1] || book.name)
 				: book.name;
@@ -508,6 +512,9 @@ export class SidecarRenderer {
 				? (BIBLE_BOOK_IDS[book.bookid - 1] || book.name)
 				: book.name;
 			const bookNameEl = titleEl.createEl("span", { text: bookDisplayName.toUpperCase(), cls: "bible-header-subtitle is-clickable", attr: { "title": "Click to switch Book" } });
+			if (this.settings.showVersionIndicator) {
+				titleEl.createEl("span", { text: this.settings.bibleVersion, cls: "bible-header-version-badge" });
+			}
 			bookNameEl.addEventListener("click", (e) => {
 				e.stopPropagation();
 				this.toggleBookQuickJump(bookNameEl, books);
@@ -837,7 +844,7 @@ export class SidecarRenderer {
 				const parsed = parseHtmlToVerses(rawHtml, isEsv, true);
 				parsed.forEach((verse) => {
 					const formattedVerseNumber = convertToSuperscript(verse.verse);
-					let displayHtml = verse.text.replace(/^\d+:\d+\s*/, "");
+					let displayHtml = stripLeadingPlainNumbers(verse.text, verse.verse);
 					const cleanText = displayHtml.replace(/<br\s*\/?>/gi, " ").replace(/<[^>]*>?/gm, "");
 
 					if (this.settings.gospelQuotesRed && ["matthew", "mark", "luke", "john"].includes(book.name.toLowerCase())) {
@@ -957,7 +964,7 @@ export class SidecarRenderer {
 			if (separate) {
 				for (const verse of chapter) {
 					const formattedVerseNumber = convertToSuperscript(verse.verse);
-					let displayHtml = verse.text.replace(/^\d+:\d+\s*/, "");
+					let displayHtml = stripLeadingPlainNumbers(verse.text, parseInt(verse.verse));
 					const cleanText = displayHtml.replace(/<br\s*\/?>/gi, " ").replace(/<[^>]*>?/gm, "");
 
 					if (this.settings.gospelQuotesRed && ["matthew", "mark", "luke", "john"].includes(book.name.toLowerCase())) {
@@ -996,7 +1003,7 @@ export class SidecarRenderer {
 				for (const verse of chapter) {
 					const formattedVerseNumber = convertToSuperscript(verse.verse);
 
-					let displayHtml = verse.text.replace(/^\d+:\d+\s*/, "");
+					let displayHtml = stripLeadingPlainNumbers(verse.text, parseInt(verse.verse));
 					if (this.settings.gospelQuotesRed && ["matthew", "mark", "luke", "john"].includes(book.name.toLowerCase())) {
 						displayHtml = displayHtml
 							.replace(/"([^"]+)"/g, '"<span style="color: red;">$1</span>"')
@@ -1189,7 +1196,7 @@ export class SidecarRenderer {
 						if (startsInRed && endsInRed && !cleanText.startsWith('<span style="color: red;">') && !cleanText.endsWith('</span>')) {
 							cleanText = `<span style="color: red;">${cleanText}</span>`;
 						}
-						cleanText = stripLeadingVerseNumbers(cleanText);
+						cleanText = stripLeadingPlainNumbers(stripLeadingVerseNumbers(cleanText), vNum);
 
 						const superscript = convertToSuperscript(vNum.toString());
 						const vUri = `obsidian://bible?book=${encodeURIComponent(resolvedBookName)}&chapter=${i}&verse=${vNum}`;
@@ -1221,7 +1228,7 @@ export class SidecarRenderer {
 					if (vNum <= 0) continue;
 
 					let verseText = cleanHtmlKeepRedSpans(el);
-					verseText = stripLeadingVerseNumbers(verseText).trim();
+					verseText = stripLeadingPlainNumbers(stripLeadingVerseNumbers(verseText), vNum).trim();
 					if (!verseText) continue;
 
 					if (!verseMap.has(vNum)) {
@@ -1300,7 +1307,7 @@ export class SidecarRenderer {
 				const segments: string[] = [];
 				verseEls.forEach(el => {
 					let text = cleanHtmlKeepRedSpans(el);
-					text = stripLeadingVerseNumbers(text).trim();
+					text = stripLeadingPlainNumbers(stripLeadingVerseNumbers(text), vNum).trim();
 					if (text) {
 						segments.push(text);
 					}
@@ -1376,7 +1383,7 @@ export class SidecarRenderer {
 					if (startsInRed && endsInRed && !cleanText.startsWith('<span style="color: red;">') && !cleanText.endsWith('</span>')) {
 						cleanText = `<span style="color: red;">${cleanText}</span>`;
 					}
-					cleanText = stripLeadingVerseNumbers(cleanText);
+					cleanText = stripLeadingPlainNumbers(stripLeadingVerseNumbers(cleanText), vNum);
 
 					const superscript = convertToSuperscript(vNum.toString());
 					const vUri = `obsidian://bible?book=${encodeURIComponent(resolvedBookName)}&chapter=${i}&verse=${vNum}`;
@@ -1406,7 +1413,7 @@ export class SidecarRenderer {
 				if (vNum <= 0) continue;
 
 				let verseText = cleanHtmlKeepRedSpans(el);
-				verseText = stripLeadingVerseNumbers(verseText).trim();
+				verseText = stripLeadingPlainNumbers(stripLeadingVerseNumbers(verseText), vNum).trim();
 				if (!verseText) continue;
 
 				if (!verseMap.has(vNum)) {
@@ -1719,7 +1726,7 @@ export class SidecarRenderer {
 		isPrimary: boolean
 	) {
 		const formattedVerseNumber = convertToSuperscript(verse.verse);
-		let displayHtml = verse.text.replace(/^\d+:\d+\s*/, "");
+		let displayHtml = stripLeadingPlainNumbers(verse.text, parseInt(verse.verse));
 		const version = isPrimary ? this.settings.bibleVersion : this.settings.secondaryBibleVersion;
 		const isEsvApi = this.settings.esvApiEnabled && this.settings.esvApiKey.trim() && version.toUpperCase() === "ESV";
 		const isApiBible = this.settings.apiBibleEnabled && this.settings.apiBibleKey.trim() && version === this.settings.apiBibleVersionId;
@@ -2030,7 +2037,7 @@ export class SidecarRenderer {
 }
 
 function wrapInlineVerses(container: HTMLElement, isEsv: boolean) {
-	const markers = Array.from(container.querySelectorAll(isEsv ? "b.verse-num, b.chapter-num, span.chapter-num" : "span.v"));
+	const markers = Array.from(container.querySelectorAll(isEsv ? ".verse-num, .chapter-num" : "span.v"));
 	const markerVerses = new Map<Element, number>();
 	markers.forEach(span => {
 		let verseNumText = isEsv ? (span.textContent?.trim() || "") : (span.getAttribute("data-number") || span.textContent || "");
@@ -2100,11 +2107,15 @@ function wrapInlineVerses(container: HTMLElement, isEsv: boolean) {
 			
 			if (isBlock) {
 				flushRun();
-				const children = Array.from(el.childNodes);
-				children.forEach(child => walk(child));
-				flushRun();
-				return;
 			}
+			
+			const children = Array.from(el.childNodes);
+			children.forEach(child => walk(child));
+			
+			if (isBlock) {
+				flushRun();
+			}
+			return;
 		}
 
 		if (node.parentNode) {

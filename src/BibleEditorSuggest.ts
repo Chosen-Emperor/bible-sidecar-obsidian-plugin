@@ -1,6 +1,6 @@
 import { Editor, EditorPosition, EditorSuggest, EditorSuggestContext, EditorSuggestTriggerInfo, TFile, Notice } from "obsidian";
 import BibleSidecarPlugin from "./main";
-import { BibleViewType } from "BibleView";
+import { BibleViewType } from "./BibleView";
 import {
 	BIBLE_BOOK_MAP,
 	convertToSuperscript,
@@ -22,6 +22,7 @@ export interface BibleEditorSuggestItem {
 
 export class BibleEditorSuggest extends EditorSuggest<BibleEditorSuggestItem> {
 	plugin: BibleSidecarPlugin;
+	private isSelecting = false;
 
 	constructor(plugin: BibleSidecarPlugin) {
 		super(plugin.app);
@@ -39,6 +40,7 @@ export class BibleEditorSuggest extends EditorSuggest<BibleEditorSuggestItem> {
 	}
 
 	onTrigger(cursor: EditorPosition, editor: Editor, file: TFile): EditorSuggestTriggerInfo | null {
+		this.isSelecting = false;
 		if (!this.plugin.settings.autoExpandBibleReferences) return null;
 
 		const prefix = this.plugin.settings.autoExpandTriggerPrefix || "--";
@@ -154,7 +156,7 @@ export class BibleEditorSuggest extends EditorSuggest<BibleEditorSuggestItem> {
 					book: chapterMatch[1].trim(),
 					chapter: parseInt(chapterMatch[2]),
 					startVerse: 1,
-					endVerse: 150,
+					endVerse: 300,
 					formatFlag: chapterMatch[3]?.toLowerCase() || null
 				};
 			}
@@ -229,7 +231,7 @@ export class BibleEditorSuggest extends EditorSuggest<BibleEditorSuggestItem> {
 											book: activeBook,
 											chapter: parseInt(chMatch[1]),
 											startVerse: 1,
-											endVerse: 150,
+											endVerse: 300,
 											formatFlag: chMatch[2]?.toLowerCase() || null
 										};
 									}
@@ -298,7 +300,7 @@ export class BibleEditorSuggest extends EditorSuggest<BibleEditorSuggestItem> {
 				return [...suggestions, ...bookSuggestions].slice(0, 15);
 			}
 
-			const isWholeChapter = startVerse === 1 && endVerse === 150;
+			const isWholeChapter = startVerse === 1 && endVerse === 300;
 			const rangeStr = isWholeChapter ? "" : (startVerse === endVerse ? `:${startVerse}` : `:${startVerse}-${endVerse}`);
 			const label = `${book} ${chapter}${rangeStr}`;
 
@@ -370,18 +372,22 @@ export class BibleEditorSuggest extends EditorSuggest<BibleEditorSuggestItem> {
 	}
 
 	selectSuggestion(value: BibleEditorSuggestItem, evt: MouseEvent | KeyboardEvent): void {
+		if (this.isSelecting) return;
+		this.isSelecting = true;
+
 		const { editor, start, end } = this.context!;
 		
 		if (value.suffix === "book_autocomplete") {
 			const prefix = this.plugin.settings.autoExpandTriggerPrefix || "--";
 			editor.replaceRange(`${prefix}${value.book} `, start, end);
+			this.isSelecting = false;
 			return;
 		}
 
 		this.plugin.fetchScriptureRange(value.book, value.chapter, value.startVerse, value.endVerse).then(res => {
 			if (res && res.versesList.length > 0) {
 				const settings = this.plugin.settings;
-				const rangeStr = (value.startVerse === 1 && value.endVerse === 150)
+				const rangeStr = (value.startVerse === 1 && value.endVerse === 300)
 					? ""
 					: (value.startVerse === value.endVerse ? value.startVerse.toString() : `${value.startVerse}-${value.endVerse}`);
 				const vList = res.versesList.map(v => v.verse).join(",");

@@ -320,6 +320,19 @@ export class BibleSidecarSettingsTab extends PluginSettingTab {
 					});
 			});
 
+		new Setting(container)
+			.setName("Show translation version indicator")
+			.setDesc("Display the active Bible translation version (e.g. ESV) in the Sidecar view headers and callout expansions.")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.showVersionIndicator)
+					.onChange(async (value) => {
+						this.plugin.settings.showVersionIndicator = value;
+						await this.plugin.saveSettings();
+						this.updateActiveViews();
+					});
+			});
+
 		container.createEl("hr", { cls: "bible-settings-inner-divider" });
 		container.createEl("h3", { text: "Study Tools & Concordance", cls: "bible-settings-subheading" });
 
