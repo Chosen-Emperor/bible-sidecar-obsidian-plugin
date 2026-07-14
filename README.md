@@ -74,6 +74,22 @@ Inserts each verse on a new line with its superscript link, followed by the refe
 
 ---
 
+## 📦 Installation
+
+### Option 1: Via Obsidian BRAT (Recommended for Beta Testing)
+1. Install the **BRAT** (Beta Reviewer's Auto-update Tool) plugin from the Obsidian Community Plugins directory.
+2. Enable BRAT in your settings.
+3. Open the command palette (`Ctrl+P` or `Cmd+P`) and select `BRAT: Add a beta plugin for testing`.
+4. Paste the repository URL: `https://github.com/Chosen-Emperor/bible-sidecar-obsidian-plugin`
+5. Click **Add Plugin** and enable **Bible Sidecar Plus** in your Community Plugins settings.
+
+### Option 2: Manual Installation
+1. Go to the [Releases](https://github.com/Chosen-Emperor/bible-sidecar-obsidian-plugin/releases) page and download the latest version zip containing `main.js`, `manifest.json`, and `styles.css`.
+2. Extract the files and move them into a new folder named `bible-sidecar-plus` inside your vault's `.obsidian/plugins/` directory.
+3. Reload Obsidian or click **Reload plugins** under settings, then enable the plugin.
+
+---
+
 ## 🚀 How to Use
 
 1. **Open the Sidecar**: Click the **Bible Icon** in the ribbon sidebar or run the Command Palette (`Open Bible Sidecar`).
