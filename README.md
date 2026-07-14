@@ -28,14 +28,16 @@ Designed to feel responsive, fast, and native across **Windows, macOS, Linux, iP
   * `JHN:world` — restricts search to a specific book (using standard 3-letter codes).
 
 ### 📝 Auto-Expand Shortcuts (IntelliSense)
-Type references directly in your note editor and watch them expand instantly:
-* **Trigger Prefixes**: Type `--John 3:16 ` (ends with a space) to output a clean markdown link: `[[John 3:16]]`.
-* **Passage Suffixes**:
-  * `--John 3:16+p` $\rightarrow$ Inserts the full scripture passage with superscript links.
-  * `--John 3:16+q` $\rightarrow$ Inserts the scripture text wrapped in a blockquote.
-  * `--John 3:16+l` $\rightarrow$ Inserts the scripture formatted as a clean bulleted list.
-* **Shorthand Typing**: Type `--John 3:16:` to see a dropdown list of following verses, or `--John 3:16-` to select from consecutive ranges. Type `--John 3:16+p` to insert it as a passage.
-* **Double-Enter Spam Lock**: Protection built-in to prevent verse duplication even if you spam the enter key.
+Easily insert scripture and reference links directly inside your note editor using the native autocomplete suggest menu:
+* **Trigger Prefix**: Type `--` followed by a book name (e.g. `--John 3:16`) to open the dropdown suggestions list.
+* **Dropdown Selection Modes**:
+  * **Link** (default) $\rightarrow$ Inserts a clean markdown link: `[[John 3:16]]`.
+  * **Passage** (`p`) $\rightarrow$ Inserts the full passage with superscript links.
+  * **Quote** (`q`) $\rightarrow$ Inserts the scripture text wrapped in a blockquote.
+  * **List** (`l`) $\rightarrow$ Inserts the scripture as a bulleted list.
+* **Quick Suffix Filtering**: Type `--John 3:16p` (or `+p`), `--John 3:16q`, or `--John 3:16l` to filter directly to that style, then press **Enter** or **Tab** to expand.
+* **IntelliSense Auto-Complete**: Type `--John 3:` to pick from list of verses, or type `--John 3:16-` to select from consecutive verse ranges.
+* **Double-Enter Spam Lock**: Safety locking built-in to prevent double-insertions or duplication even if you spam the enter key.
 
 ### 🔴 Words of Christ in Red (Gospel Accents)
 * Automatically highlights all spoken words of Jesus in **red** inside the Gospels (Matthew, Mark, Luke, John). Compatibility is built-in for modern translations using standard quotation styles (e.g., ESV, NIV, NLT, NASB).
@@ -125,13 +127,6 @@ If you want to build and modify the plugin locally:
    npm run test:api
    ```
 
-### 🏛️ System Architecture
-
-Before contributing code, please review the internal architectural documentation inside the `.meta/` directory:
-- 🗺️ **[System Architecture Overview](.meta/overview.md)** — Core design and directory layout.
-- 🌊 **[Runtime Data Flows](.meta/data_flow.md)** — Operation execution tracking.
-- 💾 **[Architectural Decision Records (ADRs)](.meta/architectural_decisions.md)** — Detailed summaries of technical design choices.
-- 📋 **[Onboarding Instructions & Checklist](.meta/instructions.md)** — Prerequisites before submitting commits or pull requests.
 
 ---
 
