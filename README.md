@@ -9,7 +9,7 @@ A premium, feature-rich **Bible Reader and Study Panel** for Obsidian. This is a
 
 Designed to feel responsive, fast, and native across **Windows, macOS, Linux, iPad, iOS, and Android**.
 
-![Obsidian Bible Sidecar Plus Showcase](images/example_usage.png)
+<p align="center"><img src="images/example_usage.png" width="800" alt="Obsidian Bible Sidecar Plus Showcase" /></p>
 
 ---
 
@@ -19,7 +19,7 @@ Designed to feel responsive, fast, and native across **Windows, macOS, Linux, iP
 * **Side-by-Side Reading**: Keep your active notes open on the left and read scriptures in a split-screen view on the right.
 * **Dual Translation Parallel View**: Compare two versions side-by-side (e.g., KJV & ESV). If your screen or pane becomes narrow (under `480px`), the layout automatically collapses into a tabbed layout for an optimal mobile experience.
 
-![Bible Sidecar Dual Parallel View](images/sidecar_example.png)
+<p align="center"><img src="images/sidecar_example.png" width="450" alt="Bible Sidecar Dual Parallel View" /></p>
 
 ### 🔍 Advanced Offline Search Engine
 * Search your downloaded translations instantly using logical operators:
@@ -48,7 +48,7 @@ Easily insert scripture and reference links directly inside your note editor usi
 * **Download Manager**: Save complete translations locally (via Bolls.life) for full offline search and reading.
 * **Outage Fallback**: If you're using online APIs (like Crossway's ESV or API.Bible) and your internet drops, the plugin automatically switches to your offline cached fallback to prevent disruptions.
 
-![Offline Download Grid & Progress Accents](images/grid_example_download.png)
+<p align="center"><img src="images/grid_example_download.png" width="400" alt="Offline Download Grid & Progress Accents" /></p>
 
 ### 🏷️ Translation Version Indicators
 * Optional small version badges (e.g., `ESV` or `KJV`) displayed inside the Sidecar navigation header.
@@ -62,15 +62,15 @@ Here is what expansions look like inside your note editor after selecting them f
 
 ### Passage Suffix (`p` or `+p`)
 Inserts full scripture text with superscript links and appends the reference link at the bottom:
-![Passage Mode Expansion Preview](images/john_316p.png)
+<p align="center"><img src="images/john_316p.png" width="500" alt="Passage Mode Expansion Preview" /></p>
 
 ### Quote Suffix (`q` or `+q`)
 Inserts the scripture text only:
-![Quote Mode Expansion Preview](images/john_316q.png)
+<p align="center"><img src="images/john_316q.png" width="500" alt="Quote Mode Expansion Preview" /></p>
 
 ### List Suffix (`l` or `+l`)
 Inserts each verse on a new line with its superscript link, followed by the reference link at the bottom:
-![List Mode Expansion Preview](images/john_316l.png)
+<p align="center"><img src="images/john_316l.png" width="500" alt="List Mode Expansion Preview" /></p>
 
 ---
 
