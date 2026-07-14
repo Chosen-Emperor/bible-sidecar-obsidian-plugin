@@ -31,10 +31,10 @@ Designed to feel responsive, fast, and native across **Windows, macOS, Linux, iP
 Easily insert scripture and reference links directly inside your note editor using the native autocomplete suggest menu:
 * **Trigger Prefix**: Type `--` followed by a book name (e.g. `--John 3:16`) to open the dropdown suggestions list.
 * **Dropdown Selection Modes**:
-  * **Link** (default) $\rightarrow$ Inserts a clean markdown link: `[[John 3:16]]`.
-  * **Passage** (`p`) $\rightarrow$ Inserts the full passage with superscript links.
-  * **Quote** (`q`) $\rightarrow$ Inserts the scripture text wrapped in a blockquote.
-  * **List** (`l`) $\rightarrow$ Inserts the scripture as a bulleted list.
+  * **Link** (default) $\rightarrow$ Inserts a clean markdown link (e.g. `[[John 3:16]]`).
+  * **Passage** (`p`) $\rightarrow$ Inserts the scripture text with superscript links, followed by the reference link at the bottom.
+  * **Quote** (`q`) $\rightarrow$ Inserts the scripture text (ideal for short, inline quotes).
+  * **List** (`l`) $\rightarrow$ Inserts each verse on a new line with its superscript link, followed by the reference link at the bottom.
 * **Quick Suffix Filtering**: Type `--John 3:16p` (or `+p`), `--John 3:16q`, or `--John 3:16l` to filter directly to that style, then press **Enter** or **Tab** to expand.
 * **IntelliSense Auto-Complete**: Type `--John 3:` to pick from list of verses, or type `--John 3:16-` to select from consecutive verse ranges.
 * **Double-Enter Spam Lock**: Safety locking built-in to prevent double-insertions or duplication even if you spam the enter key.
