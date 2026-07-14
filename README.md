@@ -1,69 +1,114 @@
 # 📖 Bible Sidecar Plus for Obsidian
 
-A premium, feature-rich Bible reader and integration panel for Obsidian. This is an enhanced fork of the original [Bible Sidecar](https://github.com/janisringli/bible-sidecar-obsidian-plugin) plugin by Janis Ringli, developed to support Offline Cache databases, full-text offline search, and touch-friendly mobile layouts. Refined with the assistance of advanced AI.
+[![Obsidian Version](https://img.shields.io/badge/Obsidian-v0.15.0%2B-purple.svg)](https://obsidian.md)
+[![Latest Release](https://img.shields.io/github/manifest-json/v/Chosen-Emperor/bible-sidecar-obsidian-plugin?color=blue)](https://github.com/Chosen-Emperor/bible-sidecar-obsidian-plugin/releases)
+[![Build Status](https://img.shields.io/badge/build-passing-success.svg)](#-development)
+[![License](https://img.shields.io/github/license/Chosen-Emperor/bible-sidecar-obsidian-plugin?color=green)](LICENSE)
 
-Designed to feel responsive, fast, and native across both Desktop and Mobile (iPad/iOS/Android).
-<img width="1492" height="968" alt="image" src="https://github.com/user-attachments/assets/78d8b443-149e-4a3d-84b7-22d898ca8478" />
+A premium, feature-rich **Bible Reader and Study Panel** for Obsidian. This is an enhanced fork of the original [Bible Sidecar](https://github.com/janisringli/bible-sidecar-obsidian-plugin) plugin, rewritten to support robust local **Offline Caching**, a high-performance **Offline Search Engine**, and responsive touch layouts for both Desktop and Mobile.
+
+Designed to feel responsive, fast, and native across **Windows, macOS, Linux, iPad, iOS, and Android**.
+
+<img width="1492" height="968" alt="Obsidian Bible Sidecar Plus Showcase" src="https://github.com/user-attachments/assets/78d8b443-149e-4a3d-84b7-22d898ca8478" />
 
 ---
 
 ## ✨ Features
 
-- **⚡ Split-Screen Bible Sidecar**: Keep your preferred Bible Versions open side-by-side with your active notes.
-- **🔍 Fast Offline Search**: Search the entire Bible offline using any word or phrase (requires downloaded Bible Versions).
-- **📝 Auto-Expand Reference Shortcuts**: Type reference patterns like `--John 3:16` or `--John 3:16 +p` to automatically fetch and expand the full Scripture Passage content directly into your editor.
-- **📋 Premium Formatting & Copy Styles**:
-  - Copy Scripture Passages as plain text or nested Obsidian Callouts.
-  - Customize prefixes (e.g., list bullets `-`, callouts `>`, tildes `~`).
-  - Toggle automatic Wiki-linking (`[[John]]`) for Scripture Passage references.
-- **🔴 Words of Christ in Red**: Turn on Gospel red-letter formatting for words spoken by Jesus (works for Bible Versions with quotation marks, e.g., ESV, NIV, NLT, NASB).
-- **🌐 Offline Downloader**: Download free Bible Versions (via Bolls.life) for full offline search and reading.
-- **🔌 Premium API Integration**: Supports connection to **Crossway's ESV API** and **API.Bible** for premium layouts (poetry, paragraphs, etc.).
+### ⚡ Split-Screen Bible Sidecar
+* **Side-by-Side Reading**: Keep your active notes open on the left and read scriptures in a split-screen view on the right.
+* **Dual Translation Parallel View**: Compare two versions side-by-side (e.g., KJV & ESV). If your screen or pane becomes narrow (under `480px`), the layout automatically collapses into a tabbed layout for an optimal mobile experience.
+
+### 🔍 Advanced Offline Search Engine
+* Search your downloaded translations instantly using logical operators:
+  * `loved world` — matches verses containing both terms.
+  * `"only Son"` — searches for the exact phrase.
+  * `world -condemn` — filters out verses containing "condemn".
+  * `ot:light` / `nt:light` — restricts search to the Old or New Testament.
+  * `JHN:world` — restricts search to a specific book (using standard 3-letter codes).
+
+### 📝 Auto-Expand Shortcuts (IntelliSense)
+Type references directly in your note editor and watch them expand instantly:
+* **Trigger Prefixes**: Type `--John 3:16 ` (ends with a space) to output a clean markdown link: `[[John 3:16]]`.
+* **Passage Suffixes**:
+  * `--John 3:16+p` $\rightarrow$ Inserts the full scripture passage with superscript links.
+  * `--John 3:16+q` $\rightarrow$ Inserts the scripture text wrapped in a blockquote.
+  * `--John 3:16+l` $\rightarrow$ Inserts the scripture formatted as a clean bulleted list.
+* **Shorthand Typing**: Type `--John 3:16:` to see a dropdown list of following verses, or `--John 3:16-` to select from consecutive ranges. Type `--John 3:16+p` to insert it as a passage.
+* **Double-Enter Spam Lock**: Protection built-in to prevent verse duplication even if you spam the enter key.
+
+### 🔴 Words of Christ in Red (Gospel Accents)
+* Automatically highlights all spoken words of Jesus in **red** inside the Gospels (Matthew, Mark, Luke, John). Compatibility is built-in for modern translations using standard quotation styles (e.g., ESV, NIV, NLT, NASB).
+
+### 🌐 Offline Downloader & Outage Protection
+* **Download Manager**: Save complete translations locally (via Bolls.life) for full offline search and reading.
+* **Outage Fallback**: If you're using online APIs (like Crossway's ESV or API.Bible) and your internet drops, the plugin automatically switches to your offline cached fallback to prevent disruptions.
+
+### 🏷️ Translation Version Indicators
+* Optional small version badges (e.g., `ESV` or `KJV`) displayed inside the Sidecar navigation header.
+* Appends active version tags inside Callout expansions (e.g. `[!quote] John 3:16 (ESV)`) so you always know which translation is referenced in your study notes.
+
+---
+
+## 🎨 Visual Preview of Expansion Modes
+
+Here is what Callout expansions look like inside your Obsidian notes when using formatting shortcuts:
+
+```markdown
+> [!quote] Scripture: John 3:16 (ESV)
+> [¹](obsidian://bible?book=John&chapter=3&verse=16) "For God so loved the world, that he gave his only Son, that whoever believes in him should not perish but have eternal life."
+```
+
+Or for multiple verses with a bulleted List expansion:
+
+```markdown
+> [¹⁶](obsidian://bible?book=John&chapter=3&verse=16) For God so loved the world...
+> [¹⁷](obsidian://bible?book=John&chapter=3&verse=17) For God did not send his Son...
+> — [John 3:16-17](obsidian://bible?book=John&chapter=3&verse=16,17) (ESV)
+```
 
 ---
 
 ## 🚀 How to Use
 
-1. **Open the Bible Sidecar**: Click the **Bible Icon** in the ribbon bar or use the Command Palette (`Open Bible Sidecar`).
-2. **Browse Scripture**: Select a book, choose a chapter, and browse verses.
-3. **Copy Scripture**:
-   - Tap/click any verse's copy icon to save it with your custom formatting rules.
-   - Select text directly in the Bible Sidecar, copy normally (`Ctrl+C` / `Cmd+C`), and it will copy with the formatted Scripture Passage reference appended automatically.
-4. **Drag & Drop**: Drag a verse container from the Bible Sidecar directly into any active note to drop the formatted scripture right there.
-5. **Use Auto-Expand**:
-   - Enable auto-expand in settings.
-   - Type `--John 3:16 ` (ends with space) to output a clean markdown link.
-   - Type `--John 3:16 +p ` or `--John 3:16 +q ` to expand the full text inline or as a callout block!
+1. **Open the Sidecar**: Click the **Bible Icon** in the ribbon sidebar or run the Command Palette (`Open Bible Sidecar`).
+2. **Offline Mode**: Navigate to settings, go to the **Translations & API Keys** tab, choose your version, and hit **Download** to cache the translation locally.
+3. **Copying Verses**:
+   * Click the **Copy Icon** next to any verse to copy it using your active formatting settings.
+   * Highlight text directly in the Sidecar, press `Ctrl+C` / `Cmd+C`, and the copied text will automatically append the correct passage reference link!
+4. **Drag & Drop**: Grab the superscript number of any verse in the Sidecar and drag it directly into your note editor.
+5. **Auto-Suggestions**: Type `--` followed by a book name (e.g., `--Romans 8:28`) and select options from the suggestion list.
 
 ---
 
 ## ⚙️ Settings Configuration
 
-| Setting | Description |
+The settings panel is organized into clean, easy-to-use tabs:
+
+| Tab Section | Customizable Features |
 | :--- | :--- |
-| **Bible Language & Version** | Select your language and download Bible Versions for offline use. |
-| **Copy Format** | Toggle between copying as **Plain text** or wrapping scripture in a markdown **Callout**. |
-| **Reference Prefix & Style** | Define how references are formatted (e.g., full book names or short abbreviations). |
-| **Auto-Expand Shortcuts** | Setup custom formatting, callout styles, and colors for `+p`, `+l`, and `+q` expand tags. |
-| **Gospel Words in Red** | Automatically styles all words of Christ in red (Gospel books only). |
-| **Enable Logging** | Write raw parse/request logs to a debug file for troubleshooting. |
+| **General** | Configure language settings, book abbreviations, and toggle separate/paragraph verse layout modes. |
+| **Translations & API Keys** | Setup connection keys for **Crossway's ESV API** or **API.Bible** (allowing poetry/indents), and download offline translation packages. |
+| **Copy Options** | Setup clipboard copy behaviors, wiki-linking (`[[John]]`), reference styles (e.g. prefix `> ` or `-`), and callout settings. |
+| **Auto-Expand Options** | Customize trigger prefixes (`--` or `//`), toggle word descriptors, and set up colors, titles, and styles for `+p`, `+l`, and `+q` expansions. |
+| **Study Tools** | Turn on Jesus's words in red, toggle Strong's concordance numbers, and adjust cross-references. |
 
 ---
 
-## 🛠️ Development
+## 🛠️ Development & Contributing
 
-Follow these steps to build and modify the plugin locally:
+If you want to build and modify the plugin locally:
 
 1. Clone the repository:
    ```bash
    git clone https://github.com/Chosen-Emperor/bible-sidecar-obsidian-plugin.git
    cd bible-sidecar-obsidian-plugin
    ```
-2. Install the dev dependencies:
+2. Install the developer dependencies:
    ```bash
    npm install
    ```
-3. Run the development server (watches files for changes):
+3. Run the development server (auto-recompiles on file edits):
    ```bash
    npm run dev
    ```
@@ -71,28 +116,32 @@ Follow these steps to build and modify the plugin locally:
    ```bash
    npm run build
    ```
+5. Run the unit test suite:
+   ```bash
+   npm run test
+   ```
+6. Run the online API compliance test suite (verifies compatibility with remote endpoints):
+   ```bash
+   npm run test:api
+   ```
 
-### 🏛️ System Architecture & Onboarding
+### 🏛️ System Architecture
 
-This codebase utilizes a centralized **Architectural Meta-Repository** inside the [.meta/](file:///c:/Users/rayni/Documents/bible-sidecar-plus/.meta/) directory. 
-
-Before making any modifications or proposing new features:
-1. Review the high-level architecture: [.meta/overview.md](file:///c:/Users/rayni/Documents/bible-sidecar-plus/.meta/overview.md)
-2. Understand execution flows: [.meta/data_flow.md](file:///c:/Users/rayni/Documents/bible-sidecar-plus/.meta/data_flow.md)
-3. Study previous technical decisions: [.meta/architectural_decisions.md](file:///c:/Users/rayni/Documents/bible-sidecar-plus/.meta/architectural_decisions.md)
-4. Check constraints & rules: [.meta/constraints_and_rules.md](file:///c:/Users/rayni/Documents/bible-sidecar-plus/.meta/constraints_and_rules.md)
-
-All future AI agents and contributors must follow the structured **onboarding checklist** in [.meta/instructions.md](file:///c:/Users/rayni/Documents/bible-sidecar-plus/.meta/instructions.md) before pushing code.
+Before contributing code, please review the internal architectural documentation inside the `.meta/` directory:
+- 🗺️ **[System Architecture Overview](.meta/overview.md)** — Core design and directory layout.
+- 🌊 **[Runtime Data Flows](.meta/data_flow.md)** — Operation execution tracking.
+- 💾 **[Architectural Decision Records (ADRs)](.meta/architectural_decisions.md)** — Detailed summaries of technical design choices.
+- 📋 **[Onboarding Instructions & Checklist](.meta/instructions.md)** — Prerequisites before submitting commits or pull requests.
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! If you find a bug, have a feature suggestion, or want to contribute translations/styles, feel free to open a Pull Request or create an issue in the [Issues Page](https://github.com/Chosen-Emperor/bible-sidecar-obsidian-plugin/issues).
+Contributions are always welcome! If you encounter a bug, have a feature suggestion, or want to improve styles/translations, feel free to open a Pull Request or create an issue in our [GitHub Issues](https://github.com/Chosen-Emperor/bible-sidecar-obsidian-plugin/issues) page.
 
 ---
 
 > [!NOTE]
 > **Credits & Authorship**
 > - Originally created and developed by [Janis Ringli](https://github.com/janisringli). (If you appreciate the core plugin, consider [buying him a coffee](https://buymeacoffee.com/janisringli)!)
-> - Enhanced and maintained by [Chosen-Emperor](https://github.com/Chosen-Emperor) with mobile compatibility, offline features, and layout polishing, developed in collaboration with AI assistance.
+> - Enhanced and maintained by [Chosen-Emperor](https://github.com/Chosen-Emperor) with mobile compatibility, offline caching, and layout polishing, developed in collaboration with AI assistance.

@@ -65,11 +65,19 @@ bible-sidecar-plus/
 │   ├── constraints_and_rules.md # Rules for future development
 │   ├── instructions.md       # AI Agent Checklist
 │   └── design-philosophies.md# Legacy design statements
+├── src/                      # Plugin Source Code
+│   ├── BibleEditorSuggest.ts # Autocomplete / IntelliSense Suggest Provider
+│   ├── BibleView.ts          # Obsidian Pane View (UI, navigation, annotations)
+│   ├── OfflineCacheStore.ts  # Database / Offline Cached Translation Manager
+│   ├── ScriptureProvider.ts  # API Fetch Manager (Bolls, ESV, API.Bible)
+│   ├── SidecarRenderer.ts    # Sidecar UI Render Helper and DOM Wrapper
+│   ├── main.ts               # Main Plugin Entry Point
+│   ├── settings.ts           # Settings Tab UI Configuration panel
+│   └── utils.ts              # Pure business logic and formatting helpers
+├── tests/                    # Developer test suites
+│   ├── run-api-tests.ts      # Live translation API compliance suite
+│   └── run-tests.ts          # Core offline & business logic unit tests
 ├── translations/             # Git-ignored cache folder housing Offline Cache files
-├── BibleView.ts              # Obsidian Pane View (UI, navigation, annotations)
-├── main.ts                   # Main Plugin Entry Point & Obsidian Command Bindings
-├── settings.ts               # Settings Panel UI & Offline Bible Version Manager
-├── utils.ts                  # Pure, platform-independent business logic utilities
 ├── styles.css                # Global and pane-specific layouts & animations
 ├── tsconfig.json             # TypeScript compilation settings
 ├── package.json              # Script automation and NPM package references
