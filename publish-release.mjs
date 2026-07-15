@@ -27,7 +27,7 @@ try {
 
 	// 4. Create GitHub release
 	console.log(`📤 Step 3: Creating GitHub release for tag ${version}...`);
-	execSync(`gh release create ${version} --title="${version}" --notes-file release-notes.md main.js manifest.json styles.css`, { stdio: "inherit" });
+	execSync(`gh release create ${version} --repo Chosen-Emperor/bible-sidecar-obsidian-plugin --title="${version}" --notes-file release-notes.md main.js manifest.json styles.css`, { stdio: "inherit" });
 	console.log(`\n🎉 Release ${version} published successfully to GitHub!`);
 } catch (error) {
 	console.error("\n❌ Release workflow failed:", error.message || error);
