@@ -597,6 +597,20 @@ export class BibleView extends ItemView {
 			try {
 				const books = await this.plugin.scriptureProvider.fetchBooks(language);
 				this.updateOfflineStatus(false);
+
+				let localData = await this.plugin.cacheStore.readLocalTranslation(this.settings.bibleVersion);
+				if (!localData) {
+					localData = {
+						version: this.settings.bibleVersion,
+						books: books,
+						passages: {},
+						apiType: this.settings.apiBibleEnabled ? "apibible" : (this.settings.esvApiEnabled && this.settings.bibleVersion.toUpperCase() === "ESV" ? "esv" : "bolls")
+					};
+				} else {
+					localData.books = books;
+				}
+				await this.plugin.cacheStore.writeLocalTranslation(this.settings.bibleVersion, localData);
+
 				return books;
 			} catch (err) {
 				this.logDebug(`ScriptureProvider books request failed: ${err.message || err}`);

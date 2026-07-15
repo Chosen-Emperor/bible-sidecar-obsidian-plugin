@@ -16,9 +16,22 @@ export interface ScriptureProvider {
 
 export class ObsidianScriptureProvider implements ScriptureProvider {
 	private settings: any;
+	private activeRequests = new Map<string, Promise<any>>();
 
 	constructor(settings: any) {
 		this.settings = settings;
+	}
+
+	private async requestUrlDeduplicated(options: any): Promise<any> {
+		const key = typeof options === "string" ? options : options.url;
+		if (this.activeRequests.has(key)) {
+			return this.activeRequests.get(key);
+		}
+		const p = requestUrl(options).finally(() => {
+			this.activeRequests.delete(key);
+		});
+		this.activeRequests.set(key, p);
+		return p;
 	}
 
 	async fetchBooks(version: string): Promise<BookInfo[]> {
@@ -47,7 +60,7 @@ export class ObsidianScriptureProvider implements ScriptureProvider {
 		};
 
 		if (isApiBible) {
-			const response = await requestUrl({
+			const response = await this.requestUrlDeduplicated({
 				url: `https://api.scripture.api.bible/v1/bibles/${this.settings.apiBibleVersionId}/books`,
 				headers: { "api-key": this.settings.apiBibleKey.trim() }
 			});
@@ -69,7 +82,7 @@ export class ObsidianScriptureProvider implements ScriptureProvider {
 			}
 		} else {
 			try {
-				const booksRes = await requestUrl({
+				const booksRes = await this.requestUrlDeduplicated({
 					url: `https://bolls.life/get-books/${version}`,
 					headers: { "Accept": "application/json" }
 				});
@@ -79,7 +92,7 @@ export class ObsidianScriptureProvider implements ScriptureProvider {
 				throw new Error(`Bolls.life returned status ${booksRes.status}`);
 			} catch (err) {
 				// Fallback to ESV list format
-				const booksResFallback = await requestUrl({
+				const booksResFallback = await this.requestUrlDeduplicated({
 					url: `https://bolls.life/get-books/ESV`,
 					headers: { "Accept": "application/json" }
 				});
@@ -107,7 +120,7 @@ export class ObsidianScriptureProvider implements ScriptureProvider {
 		if (this.settings.esvApiEnabled && this.settings.esvApiKey.trim() && version.toUpperCase() === "ESV") {
 			try {
 				const query = `${bookCode} ${chapter}`;
-				const response = await requestUrl({
+				const response = await this.requestUrlDeduplicated({
 					url: `https://api.esv.org/v3/passage/html/?q=${encodeURIComponent(query)}&include-verse-numbers=true&include-first-verse-numbers=true&include-headings=false&include-footnotes=false&include-audio-link=false&include-passage-references=false&include-copyright=false&include-short-copyright=false&wrapping-div=false`,
 					headers: { "Authorization": `Token ${this.settings.esvApiKey.trim()}` }
 				});
@@ -122,7 +135,7 @@ export class ObsidianScriptureProvider implements ScriptureProvider {
 		// Try API.Bible
 		if (this.settings.apiBibleEnabled && this.settings.apiBibleKey.trim()) {
 			try {
-				const response = await requestUrl({
+				const response = await this.requestUrlDeduplicated({
 					url: `https://api.scripture.api.bible/v1/bibles/${this.settings.apiBibleVersionId}/chapters/${bookCode}.${chapter}?include-verse-spans=true`,
 					headers: { "api-key": this.settings.apiBibleKey.trim() }
 				});
@@ -136,7 +149,7 @@ export class ObsidianScriptureProvider implements ScriptureProvider {
 
 		// Default Bolls.life fallback
 		const url = `https://bolls.life/get-chapter/${version}/${bookId}/${chapter}`;
-		const response = await requestUrl(url);
+		const response = await this.requestUrlDeduplicated(url);
 		if (response.status === 200) {
 			return response.json;
 		}
@@ -146,7 +159,7 @@ export class ObsidianScriptureProvider implements ScriptureProvider {
 	async testConnection(apiType: "esv" | "apibible", apiKey: string, apiBibleVersionId?: string): Promise<boolean> {
 		if (apiType === "esv") {
 			try {
-				const res = await requestUrl({
+				const res = await this.requestUrlDeduplicated({
 					url: "https://api.esv.org/v3/passage/html/?q=John+3:16",
 					headers: { "Authorization": `Token ${apiKey.trim()}` }
 				});
@@ -156,7 +169,7 @@ export class ObsidianScriptureProvider implements ScriptureProvider {
 			}
 		} else {
 			try {
-				const res = await requestUrl({
+				const res = await this.requestUrlDeduplicated({
 					url: "https://api.scripture.api.bible/v1/bibles",
 					headers: { "api-key": apiKey.trim() }
 				});
@@ -168,7 +181,7 @@ export class ObsidianScriptureProvider implements ScriptureProvider {
 	}
 
 	async fetchBibles(apiKey: string): Promise<any[]> {
-		const res = await requestUrl({
+		const res = await this.requestUrlDeduplicated({
 			url: "https://api.scripture.api.bible/v1/bibles",
 			headers: { "api-key": apiKey.trim() }
 		});
@@ -180,7 +193,7 @@ export class ObsidianScriptureProvider implements ScriptureProvider {
 
 	async fetchStrongsDefinition(strongsId: string): Promise<any> {
 		const query = strongsId.toUpperCase();
-		const response = await requestUrl({
+		const response = await this.requestUrlDeduplicated({
 			url: `https://bolls.life/dictionary-definition/BDBT/${query}/`,
 			headers: { "Accept": "application/json" }
 		});

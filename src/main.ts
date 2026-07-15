@@ -161,7 +161,21 @@ export default class BibleSidecarPlugin extends Plugin {
 	cacheStore: OfflineCacheStore;
 	private view: BibleView | undefined;
 	apiBiblesCache: { id: string; name: string }[] | null = null;
+	booksCache = new Map<string, any[]>();
+	private activeRequests = new Map<string, Promise<any>>();
 	private saveDebounceTimer: NodeJS.Timeout | null = null;
+
+	async cachedRequestUrl(options: any): Promise<any> {
+		const key = typeof options === "string" ? options : options.url;
+		if (this.activeRequests.has(key)) {
+			return this.activeRequests.get(key);
+		}
+		const p = requestUrl(options).finally(() => {
+			this.activeRequests.delete(key);
+		});
+		this.activeRequests.set(key, p);
+		return p;
+	}
 
 	get pluginDir(): string {
 		return `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
@@ -552,12 +566,12 @@ export default class BibleSidecarPlugin extends Plugin {
 		endVerse?: number
 	): Promise<{ versesList: { verse: number; text: string }[] } | null> {
 		const lastVerse = endVerse !== undefined ? endVerse : startVerse;
-		const localData = await this.readLocalTranslation(this.settings.bibleVersion);
+		let localData = await this.readLocalTranslation(this.settings.bibleVersion);
 		let versesList: { verse: number; text: string }[] = [];
 		let fetchSuccess = false;
 
 		if (localData) {
-			const targetBook = localData.books.find((b: any) => b.name.toLowerCase() === book.toLowerCase() || b.name.toLowerCase().startsWith(book.toLowerCase()));
+			const targetBook = localData.books?.find((b: any) => b.name.toLowerCase() === book.toLowerCase() || b.name.toLowerCase().startsWith(book.toLowerCase()));
 			if (targetBook) {
 				const cachedChapter = localData.passages[targetBook.bookid]?.[chapter];
 				if (cachedChapter) {
@@ -569,7 +583,6 @@ export default class BibleSidecarPlugin extends Plugin {
 								versesList.push({ verse: v.verse, text: cleanText });
 							}
 						});
-						fetchSuccess = versesList.length > 0;
 					} else {
 						for (const verse of cachedChapter) {
 							const vNum = parseInt(verse.verse);
@@ -578,7 +591,15 @@ export default class BibleSidecarPlugin extends Plugin {
 								versesList.push({ verse: vNum, text: cleanText });
 							}
 						}
+					}
+					
+					const expectedCount = lastVerse - startVerse + 1;
+					const isRangeFullySatisfied = versesList.length > 0 && (lastVerse >= 300 || versesList.length === expectedCount || versesList[versesList.length - 1].verse === lastVerse);
+					if (isRangeFullySatisfied) {
 						fetchSuccess = true;
+					} else {
+						// Reset list so that we fetch the complete range online
+						versesList = [];
 					}
 				}
 			}
@@ -586,10 +607,51 @@ export default class BibleSidecarPlugin extends Plugin {
 
 		if (!fetchSuccess) {
 			try {
-				const booksRes = await requestUrl(`https://bolls.life/get-books/${this.settings.bibleVersion}`);
-				const targetBook = booksRes.json.find((b: any) => b.name.toLowerCase() === book.toLowerCase() || b.name.toLowerCase().startsWith(book.toLowerCase()));
+				const versionUpper = this.settings.bibleVersion.toUpperCase();
+				let targetBook = null;
+
+				if (localData?.books) {
+					targetBook = localData.books.find((b: any) => b.name.toLowerCase() === book.toLowerCase() || b.name.toLowerCase().startsWith(book.toLowerCase()));
+				}
+				if (!targetBook) {
+					const cachedBooks = this.booksCache.get(versionUpper);
+					if (cachedBooks) {
+						targetBook = cachedBooks.find((b: any) => b.name.toLowerCase() === book.toLowerCase() || b.name.toLowerCase().startsWith(book.toLowerCase()));
+					}
+				}
+
+				if (!targetBook) {
+					const booksRes = await this.cachedRequestUrl(`https://bolls.life/get-books/${this.settings.bibleVersion}`);
+					const booksList = booksRes.json;
+					this.booksCache.set(versionUpper, booksList);
+
+					if (!localData) {
+						localData = {
+							version: this.settings.bibleVersion,
+							books: booksList,
+							passages: {},
+							apiType: "bolls"
+						};
+					} else {
+						localData.books = booksList;
+					}
+					await this.cacheStore.writeLocalTranslation(this.settings.bibleVersion, localData);
+
+					targetBook = booksList.find((b: any) => b.name.toLowerCase() === book.toLowerCase() || b.name.toLowerCase().startsWith(book.toLowerCase()));
+				}
+
 				if (targetBook) {
-					const chapterRes = await requestUrl(`https://bolls.life/get-chapter/${this.settings.bibleVersion}/${targetBook.bookid}/${chapter}`);
+					const chapterRes = await this.cachedRequestUrl(`https://bolls.life/get-chapter/${this.settings.bibleVersion}/${targetBook.bookid}/${chapter}`);
+					
+					await this.cacheStore.cachePassageLocally(
+						this.settings.bibleVersion,
+						targetBook.bookid,
+						chapter,
+						targetBook.name,
+						chapterRes.json,
+						"bolls"
+					);
+
 					for (const verse of chapterRes.json) {
 						const vNum = parseInt(verse.verse);
 						if (vNum >= startVerse && vNum <= lastVerse) {

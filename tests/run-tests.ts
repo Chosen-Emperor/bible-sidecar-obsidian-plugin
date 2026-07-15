@@ -1061,6 +1061,22 @@ async function runTestSuite() {
     assert(wholeChapterOption !== undefined, "Passage option exists for whole chapter");
     assert(wholeChapterOption?.endVerse === 300, "Whole chapter suggestions have endVerse set to 300 sentinel limit");
 
+    // ----------------------------------------------------
+    // TEST SECTION 23: FETCH OPTIMIZATION & RANGE SATISFACTION
+    // ----------------------------------------------------
+    console.log(`${colors.yellow}${colors.bold}[Test Section 23: Fetch Optimization & Range Satisfaction]${colors.reset}`);
+    
+    const testRangeSatisfaction = (verses: number[], start: number, last: number) => {
+        const expectedCount = last - start + 1;
+        return verses.length > 0 && (last >= 300 || verses.length === expectedCount || verses[verses.length - 1] === last);
+    };
+
+    assert(testRangeSatisfaction([16], 16, 16) === true, "Single verse 16 range 16-16 should be satisfied");
+    assert(testRangeSatisfaction([16, 17], 16, 17) === true, "Consecutive verses 16-17 should be satisfied");
+    assert(testRangeSatisfaction([16], 16, 17) === false, "Missing verse 17 range 16-17 should NOT be satisfied (partial download)");
+    assert(testRangeSatisfaction([16, 17, 18], 16, 300) === true, "Sentinel limit (300) accepts any available cached verses");
+    assert(testRangeSatisfaction([], 16, 16) === false, "Empty cache should NOT be satisfied");
+
     console.log();
 }
 
